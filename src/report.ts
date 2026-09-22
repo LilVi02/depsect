@@ -30,8 +30,8 @@ function details(summary: string, body: string): string {
 }
 
 export interface MarkdownExtras {
-  /** URL of the pull request opened with the safe updates. */
-  safePr?: string;
+  /** The pull request with the safe updates, or a link to open it when it could not be created. */
+  safePr?: { url: string; opened: boolean; branch: string };
 }
 
 export function toMarkdown(r: RunReport, testCommand: string, extras: MarkdownExtras = {}): string {
@@ -93,7 +93,10 @@ export function toMarkdown(r: RunReport, testCommand: string, extras: MarkdownEx
           '',
         );
       }
-      if (extras.safePr) out.push(`➡️ Opened ${extras.safePr} with just the safe updates.`, '');
+      if (extras.safePr?.opened) out.push(`➡️ Opened ${extras.safePr.url} with just the safe updates.`, '');
+      else if (extras.safePr) {
+        out.push(`➡️ Pushed \`${extras.safePr.branch}\` with just the safe updates: [open a pull request](${extras.safePr.url}).`, '');
+      }
       if (r.appliedSafe) out.push('The safe updates have been written to the working tree.', '');
       break;
     }

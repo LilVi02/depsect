@@ -50,8 +50,11 @@ export function toMarkdown(r, testCommand, extras = {}) {
             if (res.safe.length > 0) {
                 out.push(`✅ **The other ${plural(res.safe.length, 'update')} pass together** (verified):`, '', `<details><summary>Show safe updates</summary>\n\n${table(res.safe)}\n\n</details>`, '');
             }
-            if (extras.safePr)
-                out.push(`➡️ Opened ${extras.safePr} with just the safe updates.`, '');
+            if (extras.safePr?.opened)
+                out.push(`➡️ Opened ${extras.safePr.url} with just the safe updates.`, '');
+            else if (extras.safePr) {
+                out.push(`➡️ Pushed \`${extras.safePr.branch}\` with just the safe updates: [open a pull request](${extras.safePr.url}).`, '');
+            }
             if (r.appliedSafe)
                 out.push('The safe updates have been written to the working tree.', '');
             break;

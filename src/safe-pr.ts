@@ -50,8 +50,14 @@ export function safePrBody(r: RunReport, pr: number): string {
   ].join('\n');
 }
 
-/** Returns the URL of the pull request. */
-export async function openSafePr(o: SafePrOptions): Promise<string> {
+export interface SafePr {
+  url: string;
+  /** False when the branch was pushed but the PR could not be created; `url` then opens GitHub's compare page. */
+  opened: boolean;
+  hint?: string;
+}
+
+export async function openSafePr(o: SafePrOptions): Promise<SafePr> {
   const wt = await addWorktree(o.cwd, o.headSha);
   try {
     for (const [f, text] of Object.entries(o.files)) {
@@ -83,13 +89,28 @@ export async function openSafePr(o: SafePrOptions): Promise<string> {
   const open = (await o.api(o.token, 'GET', `/repos/${o.repo}/pulls?state=open&head=${owner}:${o.branch}`)) as { number: number; html_url: string }[];
   if (open[0]) {
     await o.api(o.token, 'PATCH', `/repos/${o.repo}/pulls/${open[0].number}`, { title: o.title, body: o.body });
-    return open[0].html_url;
+    return { url: open[0].html_url, opened: true };
   }
-  const created = (await o.api(o.token, 'POST', `/repos/${o.repo}/pulls`, {
-    title: o.title,
-    body: o.body,
-    head: o.branch,
-    base: o.baseRef,
-  })) as { html_url: string };
-  return created.html_url;
+  try {
+    const created = (await o.api(o.token, 'POST', `/repos/${o.repo}/pulls`, {
+      title: o.title,
+      body: o.body,
+      head: o.branch,
+      base: o.baseRef,
+    })) as { html_url: string };
+    return { url: created.html_url, opened: true };
+  } catch (err) {
+    // Repositories disallow PRs from GITHUB_TOKEN by default. The branch is
+    // pushed, so link GitHub's compare page, prefilled, instead.
+    if (!/not permitted to create or approve pull requests/.test((err as Error).message)) throw err;
+    const server = process.env.GITHUB_SERVER_URL ?? 'https://github.com';
+    const params = new URLSearchParams({ expand: '1', title: o.title, body: o.body });
+    return {
+      url: `${server}/${o.repo}/compare/${encodeURIComponent(o.baseRef)}...${encodeURIComponent(o.branch)}?${params}`,
+      opened: false,
+      hint:
+        'GitHub Actions is not allowed to create pull requests in this repository. Enable "Allow GitHub Actions to create ' +
+        'and approve pull requests" in Settings → Actions → General, or pass a pr-token.',
+    };
+  }
 }

@@ -80,14 +80,15 @@ async function main() {
             console.log('::warning::open-pr is skipped for pull requests from forks.');
         }
         else {
+            const branch = `depsect/safe-updates-${pr.number}`;
             try {
-                safePr = await openSafePr({
+                const res = await openSafePr({
                     cwd: workspace,
                     repo,
                     token: input('pr-token') || token,
                     headSha: pr.head.sha,
                     baseRef: pr.base.ref,
-                    branch: `depsect/safe-updates-${pr.number}`,
+                    branch,
                     dir,
                     files: report.safeFiles ?? {},
                     title: safePrTitle(report, pr.number),
@@ -95,7 +96,11 @@ async function main() {
                     api: gh,
                     log: (m) => console.log(m),
                 });
-                console.log(`Opened ${safePr}`);
+                safePr = { ...res, branch };
+                if (res.opened)
+                    console.log(`Opened ${res.url}`);
+                else
+                    console.log(`::warning::${res.hint}`);
             }
             catch (err) {
                 console.log(`::warning::Could not open the safe-updates PR: ${err.message}`);
@@ -109,7 +114,7 @@ async function main() {
     await setOutput('status', report.status);
     await setOutput('culprits', JSON.stringify(report.result?.culprits.map(names) ?? []));
     await setOutput('safe', JSON.stringify(names(report.result?.safe ?? [])));
-    await setOutput('safe-pr', safePr ?? '');
+    await setOutput('safe-pr', safePr?.opened ? safePr.url : '');
     if (bool('comment') && token && pr && repo && report.status !== 'no-updates') {
         try {
             await upsertComment(token, repo, pr.number, md);
