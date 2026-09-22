@@ -10,7 +10,7 @@ inputs:
     description: Command that must pass, e.g. "npm test" or "npm run build && npm test".
     required: true
   install-command:
-    description: Install command. Defaults to the package manager's install (npm install).
+    description: Install command. Defaults to the package manager's own (npm install, pnpm install, yarn install, uv sync --frozen, poetry sync, cargo fetch, go mod download).
     required: false
   base:
     description: Ref with the old dependencies. Defaults to the PR base commit.
@@ -31,6 +31,17 @@ inputs:
     description: Per-command timeout in minutes (0 = none).
     required: false
     default: '0'
+  transitive:
+    description: Bisect transitive (lockfile-only) changes. auto = only when no direct dependency changed (e.g. lock file maintenance); always; never.
+    required: false
+    default: auto
+  open-pr:
+    description: When a culprit is found, open (or refresh) a pull request with just the verified-safe updates. Needs contents and pull-requests write permissions.
+    required: false
+    default: 'false'
+  pr-token:
+    description: Token used to push the safe-updates branch and open its PR. Pushes made with the default GITHUB_TOKEN do not trigger other workflows, so pass a PAT or GitHub App token if CI should run on that PR.
+    required: false
   apply-safe:
     description: Write the verified-safe updates to the working tree, e.g. to open a PR with them.
     required: false
@@ -55,6 +66,8 @@ outputs:
     description: JSON array of culprit sets, e.g. [["postcss"],["react","react-dom"]].
   safe:
     description: JSON array of updates verified to pass together.
+  safe-pr:
+    description: URL of the pull request opened with the safe updates (when open-pr is enabled).
 
 runs:
   using: node24

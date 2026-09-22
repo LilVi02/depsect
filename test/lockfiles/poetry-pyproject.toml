@@ -1,0 +1,11 @@
+[project]
+name = "lf"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = ["requests (>=2.31,<3)"]
+
+[tool.poetry]
+package-mode = false
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0"

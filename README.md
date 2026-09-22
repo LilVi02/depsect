@@ -5,6 +5,8 @@
 **`git bisect` for grouped dependency updates.**
 Dependabot bumped 23 packages in one PR and CI is red. Which one broke it? `depsect` tells you, and hands you the other 22 already verified green.
 
+Works with **npm, pnpm, Yarn, uv, Poetry, Cargo and Go modules**.
+
 <p align="center">
   <img src="docs/demo.svg" alt="depsect bisecting a grouped update of 7 real npm packages: chalk and date-fns are the culprits, the other 5 are verified safe" width="760">
 </p>
@@ -13,7 +15,7 @@ Dependabot bumped 23 packages in one PR and CI is red. Which one broke it? `deps
 
 ## Why
 
-Grouping dependency updates is great until the group fails. Then you get one red check and 20 bumps, and the options are all bad: merge nothing, bump packages by hand one at a time, or split the group and wait for more CI runs.
+Grouping dependency updates is great until the group fails. Then you get one red check and 20 bumps, and the options are all bad: merge nothing, bump packages by hand one at a time, or split the group and wait for more CI runs. Lockfile refreshes (Renovate's *lock file maintenance*, `cargo update`, `uv lock --upgrade`) are worse still: hundreds of transitive packages move and nothing in the manifest changes.
 
 `git bisect` doesn't help, because every update lives in **the same commit**. depsect bisects *inside* the change: it applies subsets of the updates on top of the old lockfile, runs your tests, and narrows down to the smallest set that fails.
 
@@ -22,7 +24,8 @@ It finds:
 - **the single bad bump** in `O(log n)` runs: 64 updates take about 10 runs, not 64;
 - **incompatible pairs** (or triples): `react@19` is fine and `some-lib@5` is fine, but together they break;
 - **several independent culprits** in the same PR;
-- the **safe set**: every other update, re-verified together, so you can merge it right away.
+- **the transitive package** that broke a lockfile refresh;
+- the **safe set**: every other update, re-verified together. The Action can open a PR with just those.
 
 If the build fails even without the updates, or passes with all of them, depsect says so instead of blaming an innocent package.
 
@@ -40,21 +43,22 @@ jobs:
     if: github.actor == 'dependabot[bot]' || github.actor == 'renovate[bot]'
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write # only needed for open-pr
       pull-requests: write # to post the report
     steps:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v5 # or setup-python / setup-uv / setup-go / rust-toolchain
         with:
           node-version: 22
       - uses: LilVi02/depsect@v0
         with:
           test-command: npm test
+          open-pr: true # open a PR with just the safe updates
 ```
 
-Using pnpm or Yarn? Add `pnpm/action-setup` or `corepack enable` before depsect, the same way you would for your normal CI.
+Set up the toolchain the same way your normal CI does (`pnpm/action-setup`, `corepack enable`, `astral-sh/setup-uv`, `pipx install poetry`, `actions/setup-go`, `dtolnay/rust-toolchain`).
 
 It posts a report on the PR (and updates it on re-runs) with the culprit, the failing output, and the list of safe updates. The same report goes to the job summary.
 
@@ -62,36 +66,58 @@ It posts a report on the PR (and updates it on re-runs) with the culprit, the fa
   <a href="https://github.com/LilVi02/depsect-demo/pull/1"><img src="docs/pr-comment.png" alt="depsect report comment on a pull request: chalk 4.1.2 → 6.0.0 and date-fns 2.30.0 → 4.4.0 broke the build, the other 5 updates pass together" width="640"></a>
 </p>
 
+With `open-pr: true`, depsect also pushes a `depsect/safe-updates-<pr>` branch from the PR's head with only the safe updates applied, opens a pull request for it, and links it in the report. The branch is refreshed on every run.
+
 | Input | Default | |
 | --- | --- | --- |
 | `test-command` | *required* | Command that must pass. |
-| `install-command` | auto | How to install dependencies. Default: `npm install`, `pnpm install --no-frozen-lockfile` or `yarn install`, depending on the lockfile. |
+| `install-command` | auto | How to install dependencies. Defaults to the package manager's own (see below). |
 | `base` | PR base commit | Ref with the old dependencies. |
 | `head` | `HEAD` | Ref with the new dependencies. |
 | `working-directory` | `.` | Project directory (for monorepos). |
+| `transitive` | `auto` | Bisect transitive (lockfile-only) changes: `auto` does it when no direct dependency changed (e.g. lock file maintenance); `always`; `never`. |
+| `open-pr` | `false` | Open a PR with just the safe updates. Needs `contents: write`. |
+| `pr-token` | `github-token` | Token for the safe-updates PR. Pushes made with the default `GITHUB_TOKEN` don't trigger other workflows, so pass a PAT or GitHub App token if CI should run on that PR. |
 | `retries` | `0` | Re-run failing tests before trusting them (flaky suites). |
 | `timeout-minutes` | `0` | Per-command timeout. |
-| `apply-safe` | `false` | Write the safe updates to the working tree. Pair it with [create-pull-request](https://github.com/peter-evans/create-pull-request) to open a green PR automatically. |
+| `apply-safe` | `false` | Write the safe updates to the working tree. |
 | `comment` | `true` | Comment on the PR. |
 | `fail-on-culprit` | `true` | Fail the step when a culprit is found. |
 
-Outputs: `status` (`found` / `no-failure` / `base-broken` / `no-updates`), `culprits` (JSON, e.g. `[["alpha"],["delta","gamma"]]`), `safe` (JSON).
+Outputs: `status` (`found` / `no-failure` / `base-broken` / `no-updates`), `culprits` (JSON, e.g. `[["alpha"],["delta","gamma"]]`), `safe` (JSON), `safe-pr` (URL).
 
 ## CLI
 
 ```bash
 npx depsect --test "npm test"                        # compares HEAD~1 → HEAD
-npx depsect --base origin/main --test "npm run build && npm test"
-npx depsect --test "npm test" --apply-safe           # keep only the safe bumps
+npx depsect --base origin/main --test "cargo test"
+npx depsect --test "uv run pytest" --transitive always
+npx depsect --test "go test ./..." --apply-safe      # keep only the safe bumps
 ```
 
-depsect works in a throwaway `git worktree`, so your checkout and `node_modules` stay untouched (unless you pass `--apply-safe`). Run `depsect --help` for all options. Exit codes: `0` no culprit, `1` culprit found, `2` base already broken, `3` error.
+depsect works in a throwaway `git worktree`, so your checkout stays untouched (unless you pass `--apply-safe`). Run `depsect --help` for all options. Exit codes: `0` no culprit, `1` culprit found, `2` base already broken, `3` error.
+
+## Supported ecosystems
+
+The package manager is picked from the lockfile. Each one applies a subset of updates the most faithful way it allows:
+
+| | Detected by | Applying a subset | Transitive changes | Default install |
+| --- | --- | --- | --- | --- |
+| **npm** | `package-lock.json` | head's declaration, pinned to the exact version head resolved | spliced from the head lockfile | `npm install` |
+| **pnpm** | `pnpm-lock.yaml` | same | `pnpm.overrides` | `pnpm install --no-frozen-lockfile` |
+| **Yarn** v1 and Berry | `yarn.lock` | same | `resolutions` | `yarn install` |
+| **uv** | `uv.lock` | the lockfile is composed package by package from base and head | same | `uv sync --frozen` |
+| **Poetry** | `poetry.lock` | same | same | `poetry sync` |
+| **Cargo** | `Cargo.lock` | `cargo update -p name@old --precise new`, plus head's declaration in `Cargo.toml` | same | `cargo fetch` |
+| **Go** | `go.mod` | `go get module@version` on top of the base `go.mod` | `// indirect` requirements, same way | `go mod download` |
+
+Python environments hold one version of each package, so for uv and Poetry the composed lockfile is exactly "base, with these packages from head" (plus any new packages they need), installed as-is.
 
 ## How it works
 
-1. Read `package.json` and the lockfile (`package-lock.json`, `pnpm-lock.yaml` or `yarn.lock`) at `base` and `head`, then list the changed direct dependencies. That includes lockfile-only bumps, where the range already allowed the new version.
+1. Read the manifest and lockfile at `base` and `head` and list every package whose resolved version changed, direct or transitive.
 2. Check out `head` in a temporary worktree, so the code stays constant and only dependencies vary.
-3. For a subset *S* of updates, write the **base** manifest and lockfile with just *S* applied, install, and run the tests. Installing on top of the old lockfile means everything outside *S* stays pinned.
+3. For a subset *S* of updates, start from the **base** dependency state, apply just *S* (see the table above), install, and run the tests. Everything outside *S* stays at its base version.
 4. Search:
    - check that the empty set passes and the full set fails;
    - binary-search the shortest failing prefix, whose last update is required;
@@ -101,24 +127,29 @@ depsect works in a throwaway `git worktree`, so your checkout and `node_modules`
 
 ## Status and roadmap
 
-Supported today: **npm**, **pnpm**, and **Yarn** (v1 and Berry). The package manager is picked from the lockfile. The search core is independent of the ecosystem, so adding one means writing a single adapter.
-
 - [x] npm, pnpm, Yarn v1, Yarn Berry
-- [ ] Python (uv, Poetry), Cargo, Go modules
-- [ ] Bisect transitive-only lockfile changes (currently reported, not isolated)
-- [ ] Open a split PR with the safe updates directly from the Action
+- [x] Python (uv, Poetry), Cargo, Go modules
+- [x] Bisect transitive-only lockfile changes
+- [x] Open a PR with the safe updates from the Action
 - [ ] Run independent subsets in parallel
+- [ ] Workspaces and monorepos with several lockfiles in one PR
+- [ ] Bundler, Composer, Maven/Gradle
 
-Known limitation: when depsect applies a subset, the package manager re-resolves that package's own dependencies, which can differ slightly from what the bot's lockfile picked. This almost never changes the verdict, but it is not a byte-for-byte replay.
+Known limitations:
+
+- For npm, pnpm and Yarn, applying a direct update lets the package manager re-resolve that package's own subtree, which can differ slightly from the bot's lockfile. This almost never changes the verdict.
+- pnpm and Yarn cannot force a transitive package that is installed at several versions side by side; such changes are listed in the report as not isolated.
+- For Cargo workspaces, only the root `Cargo.toml` is edited. An update that also had to change a member crate's `Cargo.toml` cannot be applied faithfully yet.
 
 ## Development
 
 ```bash
 npm install
-npm test        # unit tests + end-to-end tests against real git repos (offline)
-                # e2e runs for pnpm/Yarn when they are on PATH; Yarn Berry needs DEPSECT_TEST_BERRY_PATH
+npm test        # unit tests + offline end-to-end tests against real package managers
 npm run build   # compiles to dist/ (committed, used by the Action)
 ```
+
+The end-to-end tests build throwaway repos with a local npm registry, a local PyPI index, a Cargo directory source and a file-based Go proxy, so they run offline. Each ecosystem's tests run when its tools are on `PATH` (Yarn Berry also needs `DEPSECT_TEST_BERRY_PATH`); `DEPSECT_E2E=npm,cargo` runs a subset.
 
 ## License
 

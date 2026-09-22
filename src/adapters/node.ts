@@ -1,9 +1,10 @@
 // JavaScript package managers. They share package.json semantics and differ
-// only in the lockfile format and the install command.
+// in the lockfile format, the install command, and how a transitive package
+// can be forced to a version.
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isBerry, npmLock, pnpmLock, yarnLock, type LockReader } from './lockfiles.ts';
-import type { Adapter, Snapshot, Update } from './types.ts';
+import { sameSet, showVersions, type Adapter, type Snapshot, type Update } from './types.ts';
 
 const MANIFEST = 'package.json';
 const SECTIONS = ['dependencies', 'devDependencies', 'optionalDependencies'] as const;
@@ -32,17 +33,48 @@ function directNames(...mans: (Manifest | null)[]): string[] {
   return [...names].sort();
 }
 
+/** A registry range like "^1.2.3" or ">=2 <3", as opposed to file:, git:, npm: aliases, workspace:, URLs. */
+const isRegistryRange = (spec: string) => /^[\s\d^~<>=*xX.|-]+$/.test(spec) || /^\d+\.\d+\.\d+([-+][\w.-]+)?$/.test(spec);
+
+/** How a package manager forces a transitive package to a version. */
+interface TransitiveStrategy {
+  /** Can this change be applied on its own? Multi-version packages usually cannot. */
+  supports(base: Set<string>, head: Set<string>): boolean;
+  apply(ctx: { man: Manifest; lock: string | null; headLock: string; subset: Update[] }): { lock: string | null };
+}
+
 interface NodeAdapterSpec {
   name: string;
   lockfile: string;
   reader: LockReader;
   install: (head: Snapshot) => string;
+  transitive: TransitiveStrategy;
 }
 
-function nodeAdapter({ name, lockfile, reader, install }: NodeAdapterSpec): Adapter {
+function nodeAdapter({ name, lockfile, reader, install, transitive }: NodeAdapterSpec): Adapter {
   const resolved = (snap: Snapshot, dep: string, spec: string | undefined) => {
     const text = snap[lockfile];
     return text && spec !== undefined ? reader.direct(text, dep, spec) : undefined;
+  };
+
+  /** Base package.json with head's declarations for the direct updates in `subset`. */
+  const buildManifest = (base: Snapshot, head: Snapshot, subset: Update[], pin: boolean): Manifest => {
+    const baseText = base[MANIFEST];
+    if (!baseText) throw new Error(`${MANIFEST} does not exist at the base ref`);
+    const man = parse(baseText)!;
+    const hm = parse(head[MANIFEST]);
+    for (const u of subset.filter((x) => x.kind === 'direct')) {
+      const b = sectionOf(man, u.name);
+      const h = sectionOf(hm, u.name);
+      if (b) delete man[b.section]![u.name];
+      if (!h) continue; // removed in head
+      // Pin the exact version the head lockfile resolved, so the package
+      // manager installs that version and not whatever is newest today.
+      const hv = resolved(head, u.name, h.spec);
+      const spec = pin && hv && isRegistryRange(h.spec) ? hv : h.spec;
+      man[h.section] = { ...(man[h.section] ?? {}), [u.name]: spec };
+    }
+    return man;
   };
 
   return {
@@ -58,7 +90,10 @@ function nodeAdapter({ name, lockfile, reader, install }: NodeAdapterSpec): Adap
       const bm = parse(base[MANIFEST]);
       const hm = parse(head[MANIFEST]);
       const updates: Update[] = [];
-      for (const dep of directNames(bm, hm)) {
+      const excluded: string[] = [];
+      const direct = directNames(bm, hm);
+
+      for (const dep of direct) {
         const b = sectionOf(bm, dep);
         const h = sectionOf(hm, dep);
         const bv = resolved(base, dep, b?.spec);
@@ -71,62 +106,94 @@ function nodeAdapter({ name, lockfile, reader, install }: NodeAdapterSpec): Adap
           section: (h ?? b)!.section,
           from: b ? (bv ?? b.spec) : null,
           to: h ? (hv ?? h.spec) : null,
+          kind: 'direct',
         });
       }
-      return updates;
-    },
 
-    notes(base, head) {
+      // Transitive packages whose resolved versions changed. Packages that
+      // only appear or disappear are consequences of other changes.
       const bl = base[lockfile];
       const hl = head[lockfile];
-      if (!bl || !hl) return [];
-      const direct = new Set(directNames(parse(base[MANIFEST]), parse(head[MANIFEST])));
-      const b = reader.all(bl);
-      const h = reader.all(hl);
-      const same = (x?: Set<string>, y?: Set<string>) => x?.size === y?.size && [...(x ?? [])].every((v) => y?.has(v));
-      let transitive = 0;
-      for (const pkg of new Set([...b.keys(), ...h.keys()])) {
-        if (!direct.has(pkg) && !same(b.get(pkg), h.get(pkg))) transitive++;
+      if (bl && hl) {
+        const b = reader.all(bl);
+        const h = reader.all(hl);
+        const directSet = new Set(direct);
+        for (const pkg of [...new Set([...b.keys(), ...h.keys()])].sort()) {
+          const bv = b.get(pkg);
+          const hv = h.get(pkg);
+          if (directSet.has(pkg) || !bv || !hv || sameSet(bv, hv)) continue;
+          const u: Update = { id: pkg, name: pkg, section: 'lockfile', from: showVersions(bv), to: showVersions(hv), kind: 'transitive' };
+          if (transitive.supports(bv, hv)) updates.push(u);
+          else excluded.push(`${pkg} ${u.from} → ${u.to} (several versions installed side by side)`);
+        }
       }
-      return transitive > 0
-        ? [
-            `${transitive} transitive package(s) changed in ${lockfile} as well. depsect bisects direct dependencies ` +
-              `and lets ${name} re-resolve their subtrees, so transitive-only changes are not tested individually.`,
-          ]
-        : [];
+      return { updates, excluded };
     },
 
     async write(dir, base, head, subset) {
-      const baseText = base[MANIFEST];
-      if (!baseText) throw new Error(`${MANIFEST} does not exist at the base ref`);
-      const man = parse(baseText)!;
-      const hm = parse(head[MANIFEST]);
-
-      for (const u of subset) {
-        const b = sectionOf(man, u.name);
-        const h = sectionOf(hm, u.name);
-        if (b) delete man[b.section]![u.name];
-        if (!h) continue; // removed in head
-
-        // If only the lockfile moved (a range that already allowed the new
-        // version), pin the exact version so the package manager installs it.
-        const hv = resolved(head, u.name, h.spec);
-        const spec = b && b.spec === h.spec && b.section === h.section && hv ? hv : h.spec;
-        man[h.section] = { ...(man[h.section] ?? {}), [u.name]: spec };
-      }
-
-      await writeFile(join(dir, MANIFEST), JSON.stringify(man, null, detectIndent(baseText)) + '\n');
-      const lock = base[lockfile];
+      const man = buildManifest(base, head, subset, true);
+      const trans = subset.filter((x) => x.kind === 'transitive');
+      let lock = base[lockfile] ?? null;
+      if (trans.length) ({ lock } = transitive.apply({ man, lock, headLock: head[lockfile] ?? '', subset: trans }));
+      await writeFile(join(dir, MANIFEST), JSON.stringify(man, null, detectIndent(base[MANIFEST]!)) + '\n');
       if (lock != null) await writeFile(join(dir, lockfile), lock);
+      return [];
+    },
+
+    // The installed lockfile already has the right versions; put back head's
+    // specs (no exact pins, no temporary overrides) so the result reads like
+    // the original PR.
+    async finalize(dir, base, head, subset) {
+      const man = buildManifest(base, head, subset, false);
+      await writeFile(join(dir, MANIFEST), JSON.stringify(man, null, detectIndent(base[MANIFEST]!)) + '\n');
+      return [];
     },
   };
 }
+
+// --- npm: splice the package's entries from the head lockfile ------------------
+
+interface NpmLockJson {
+  packages?: Record<string, unknown>;
+  [k: string]: unknown;
+}
+
+const npmName = (key: string) => key.slice(key.lastIndexOf('node_modules/') + 'node_modules/'.length);
+
+/**
+ * Replace every installed copy of each package (and whatever is nested
+ * under it) with the copies from the head lockfile. `npm install` then fixes
+ * up anything the new versions need that the old tree does not have.
+ */
+export function spliceNpmLock(baseLock: string, headLock: string, names: string[]): string {
+  const base = JSON.parse(baseLock) as NpmLockJson;
+  const head = JSON.parse(headLock) as NpmLockJson;
+  const wanted = new Set(names);
+  const owned = (pkgs: Record<string, unknown>) => {
+    const roots = Object.keys(pkgs).filter((k) => k.includes('node_modules/') && wanted.has(npmName(k)));
+    return Object.keys(pkgs).filter((k) => roots.some((r) => k === r || k.startsWith(`${r}/node_modules/`)));
+  };
+  const packages = { ...(base.packages ?? {}) };
+  for (const k of owned(packages)) delete packages[k];
+  for (const k of owned(head.packages ?? {})) packages[k] = head.packages![k];
+  const sorted = Object.fromEntries(Object.keys(packages).sort().map((k) => [k, packages[k]]));
+  return JSON.stringify({ ...base, packages: sorted }, null, 2) + '\n';
+}
+
+const single = (base: Set<string>, head: Set<string>) => base.size === 1 && head.size === 1;
+const headVersion = (u: Update) => u.to!;
 
 export const npm = nodeAdapter({
   name: 'npm',
   lockfile: 'package-lock.json',
   reader: npmLock,
   install: () => 'npm install --no-audit --no-fund --loglevel=error',
+  transitive: {
+    supports: () => true,
+    apply: ({ lock, headLock, subset }) => ({
+      lock: lock == null ? null : spliceNpmLock(lock, headLock, subset.map((u) => u.name)),
+    }),
+  },
 });
 
 export const pnpm = nodeAdapter({
@@ -135,6 +202,15 @@ export const pnpm = nodeAdapter({
   reader: pnpmLock,
   // pnpm freezes the lockfile under CI=true; depsect changes package.json on purpose.
   install: () => 'pnpm install --no-frozen-lockfile',
+  transitive: {
+    supports: single,
+    apply: ({ man, lock, subset }) => {
+      const pnpmField = (man.pnpm ?? {}) as { overrides?: Record<string, string> };
+      pnpmField.overrides = { ...(pnpmField.overrides ?? {}), ...Object.fromEntries(subset.map((u) => [u.name, headVersion(u)])) };
+      man.pnpm = pnpmField;
+      return { lock };
+    },
+  },
 });
 
 export const yarn = nodeAdapter({
@@ -145,4 +221,11 @@ export const yarn = nodeAdapter({
     isBerry(head['yarn.lock'] ?? '')
       ? 'YARN_ENABLE_IMMUTABLE_INSTALLS=false yarn install'
       : 'yarn install --non-interactive --no-progress',
+  transitive: {
+    supports: single,
+    apply: ({ man, lock, subset }) => {
+      man.resolutions = { ...((man.resolutions as Record<string, string>) ?? {}), ...Object.fromEntries(subset.map((u) => [u.name, headVersion(u)])) };
+      return { lock };
+    },
+  },
 });

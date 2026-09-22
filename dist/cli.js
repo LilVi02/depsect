@@ -14,6 +14,8 @@ Options:
   -d, --dir <path>      Project directory relative to the repo root (default: .)
   -i, --install <cmd>   Install command (default depends on the package manager)
   -r, --retries <n>     Re-run a failing test n times before trusting it (default: 0)
+      --transitive <m>  Bisect lockfile-only (transitive) changes: auto, always, never
+                        (default: auto = only when no direct dependency changed)
       --timeout <min>   Per-command timeout in minutes
       --apply-safe      Write the verified-safe updates to the working tree
       --markdown        Print a Markdown report instead of the terminal one
@@ -32,6 +34,7 @@ async function main() {
             install: { type: 'string', short: 'i' },
             retries: { type: 'string', short: 'r', default: '0' },
             timeout: { type: 'string' },
+            transitive: { type: 'string', default: 'auto' },
             'apply-safe': { type: 'boolean', default: false },
             markdown: { type: 'boolean', default: false },
             json: { type: 'boolean', default: false },
@@ -42,6 +45,8 @@ async function main() {
         console.log(HELP);
         return values.help ? 0 : 3;
     }
+    if (!['auto', 'always', 'never'].includes(values.transitive))
+        throw new Error('--transitive must be auto, always or never');
     const quiet = values.json || values.markdown;
     const useColor = process.stdout.isTTY && !process.env.NO_COLOR;
     const c = useColor && !quiet ? colors : noColors;
@@ -56,10 +61,11 @@ async function main() {
         retries: Number(values.retries),
         timeoutMs: values.timeout ? Number(values.timeout) * 60_000 : undefined,
         applySafe: values['apply-safe'],
+        transitive: values.transitive,
         log: (m) => (quiet ? console.error(m) : console.log(paintRun(m))),
     });
     if (values.json)
-        console.log(JSON.stringify(report, null, 2));
+        console.log(JSON.stringify({ ...report, safeFiles: undefined }, null, 2));
     else if (values.markdown)
         console.log(toMarkdown(report, values.test));
     else
