@@ -1,5 +1,7 @@
 # depsect
 
+[![npm](https://img.shields.io/npm/v/depsect)](https://www.npmjs.com/package/depsect) [![ci](https://github.com/LilVi02/depsect/actions/workflows/ci.yml/badge.svg)](https://github.com/LilVi02/depsect/actions/workflows/ci.yml) [![license](https://img.shields.io/github/license/LilVi02/depsect)](LICENSE)
+
 **`git bisect` for grouped dependency updates.**
 Dependabot bumped 23 packages in one PR and CI is red. Which one broke it? `depsect` tells you, and hands you the other 22 already verified green.
 
@@ -78,9 +80,9 @@ Outputs: `status` (`found` / `no-failure` / `base-broken` / `no-updates`), `culp
 ## CLI
 
 ```bash
-npx github:LilVi02/depsect --test "npm test"              # compares HEAD~1 → HEAD
-npx github:LilVi02/depsect --base origin/main --test "npm run build && npm test"
-npx github:LilVi02/depsect --test "npm test" --apply-safe # keep only the safe bumps
+npx depsect --test "npm test"                        # compares HEAD~1 → HEAD
+npx depsect --base origin/main --test "npm run build && npm test"
+npx depsect --test "npm test" --apply-safe           # keep only the safe bumps
 ```
 
 depsect works in a throwaway `git worktree`, so your checkout and `node_modules` stay untouched (unless you pass `--apply-safe`). Run `depsect --help` for all options. Exit codes: `0` no culprit, `1` culprit found, `2` base already broken, `3` error.
