@@ -1,6 +1,6 @@
 import { copyFile } from 'node:fs/promises';
 import { join, posix } from 'node:path';
-import { adapters } from "./adapters/npm.js";
+import { adapters } from "./adapters/index.js";
 import { BaseBrokenError, findCulprits, NoFailureError } from "./bisect.js";
 import { sh } from "./exec.js";
 import { addWorktree, readAt, repoRoot, resolveRef } from "./git.js";
@@ -39,7 +39,7 @@ export async function run(opts) {
     // Run against the head code so the only thing that varies is dependencies.
     const wt = await addWorktree(root, head);
     const projectDir = join(wt.path, dir);
-    const install = opts.install ?? adapter.installCommand;
+    const install = opts.install ?? adapter.installCommand(headSnap);
     const logs = new Map();
     const keyOf = (subset) => subset.map((u) => u.id).join('\0');
     const apply = async (subset) => {

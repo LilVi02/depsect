@@ -23,5 +23,5 @@ export interface Adapter {
   notes(base: Snapshot, head: Snapshot): string[];
   /** Write the base dependency state with `subset` applied into `dir`. */
   write(dir: string, base: Snapshot, head: Snapshot, subset: Update[]): Promise<void>;
-  installCommand: string;
+  installCommand(head: Snapshot): string;
 }

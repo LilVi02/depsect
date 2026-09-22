@@ -73,12 +73,14 @@ jobs:
           test-command: npm test
 ```
 
+Using pnpm or Yarn? Add `pnpm/action-setup` or `corepack enable` before depsect, the same way you would for your normal CI.
+
 It posts a report on the PR (and updates it on re-runs) with the culprit, the failing output, and the list of safe updates. The same report goes to the job summary.
 
 | Input | Default | |
 | --- | --- | --- |
 | `test-command` | *required* | Command that must pass. |
-| `install-command` | `npm install` | How to install dependencies. |
+| `install-command` | auto | How to install dependencies. Default: `npm install`, `pnpm install --no-frozen-lockfile` or `yarn install`, depending on the lockfile. |
 | `base` | PR base commit | Ref with the old dependencies. |
 | `head` | `HEAD` | Ref with the new dependencies. |
 | `working-directory` | `.` | Project directory (for monorepos). |
@@ -102,7 +104,7 @@ depsect works in a throwaway `git worktree`, so your checkout and `node_modules`
 
 ## How it works
 
-1. Read the manifest and lockfile at `base` and `head`, then list the changed direct dependencies. That includes lockfile-only bumps, where the range already allowed the new version.
+1. Read `package.json` and the lockfile (`package-lock.json`, `pnpm-lock.yaml` or `yarn.lock`) at `base` and `head`, then list the changed direct dependencies. That includes lockfile-only bumps, where the range already allowed the new version.
 2. Check out `head` in a temporary worktree, so the code stays constant and only dependencies vary.
 3. For a subset *S* of updates, write the **base** manifest and lockfile with just *S* applied, install, and run the tests. Installing on top of the old lockfile means everything outside *S* stays pinned.
 4. Search:
@@ -114,21 +116,22 @@ depsect works in a throwaway `git worktree`, so your checkout and `node_modules`
 
 ## Status and roadmap
 
-v0.1 supports **npm** (`package-lock.json`). The search core is independent of the package manager, and adding an ecosystem means writing one adapter (~100 lines).
+Supported today: **npm**, **pnpm**, and **Yarn** (v1 and Berry). The package manager is picked from the lockfile. The search core is independent of the ecosystem, so adding one means writing a single adapter.
 
-- [ ] pnpm, Yarn
+- [x] npm, pnpm, Yarn v1, Yarn Berry
 - [ ] Python (uv, Poetry), Cargo, Go modules
 - [ ] Bisect transitive-only lockfile changes (currently reported, not isolated)
 - [ ] Open a split PR with the safe updates directly from the Action
 - [ ] Run independent subsets in parallel
 
-Known limitation: when depsect applies a subset, npm re-resolves that package's own dependencies, which can differ slightly from what the bot's lockfile picked. This almost never changes the verdict, but it is not a byte-for-byte replay.
+Known limitation: when depsect applies a subset, the package manager re-resolves that package's own dependencies, which can differ slightly from what the bot's lockfile picked. This almost never changes the verdict, but it is not a byte-for-byte replay.
 
 ## Development
 
 ```bash
 npm install
-npm test        # unit tests + an end-to-end test against a real git repo and npm (offline)
+npm test        # unit tests + end-to-end tests against real git repos (offline)
+                # e2e runs for pnpm/Yarn when they are on PATH; Yarn Berry needs DEPSECT_TEST_BERRY_PATH
 npm run build   # compiles to dist/ (committed, used by the Action)
 ```
 

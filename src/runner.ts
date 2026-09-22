@@ -1,6 +1,6 @@
 import { copyFile } from 'node:fs/promises';
 import { join, posix } from 'node:path';
-import { adapters } from './adapters/npm.ts';
+import { adapters } from './adapters/index.ts';
 import type { Adapter, Snapshot, Update } from './adapters/types.ts';
 import { BaseBrokenError, findCulprits, NoFailureError, type BisectResult, type Outcome } from './bisect.ts';
 import { sh } from './exec.ts';
@@ -76,7 +76,7 @@ export async function run(opts: RunOptions): Promise<RunReport> {
   // Run against the head code so the only thing that varies is dependencies.
   const wt = await addWorktree(root, head);
   const projectDir = join(wt.path, dir);
-  const install = opts.install ?? adapter.installCommand;
+  const install = opts.install ?? adapter.installCommand(headSnap);
   const logs = new Map<string, string>();
   const keyOf = (subset: Update[]) => subset.map((u) => u.id).join('\0');
 

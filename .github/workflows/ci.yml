@@ -16,6 +16,11 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: ${{ matrix.node }}
+      - name: Install pnpm and Yarn (for the end-to-end tests)
+        run: |
+          npm install -g pnpm@10 yarn@1
+          npm install --prefix "$RUNNER_TEMP/berry" @yarnpkg/cli-dist@4
+          echo "DEPSECT_TEST_BERRY_PATH=$RUNNER_TEMP/berry/node_modules/@yarnpkg/cli-dist/bin/yarn.js" >> "$GITHUB_ENV"
       - run: npm ci
       - run: npm run typecheck
       - run: npm test

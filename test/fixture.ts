@@ -34,7 +34,19 @@ if (d('gamma') === 2 && d('delta') === 2) { console.error('gamma@2 is incompatib
 console.log('all good');
 `;
 
-export async function makeFixture(): Promise<string> {
+export type Manager = 'npm' | 'pnpm' | 'yarn' | 'yarn-berry';
+
+export const INSTALL: Record<Manager, string> = {
+  npm: 'npm install --no-audit --no-fund --loglevel=error',
+  pnpm: 'pnpm install --no-frozen-lockfile',
+  yarn: 'yarn install --non-interactive --no-progress',
+  'yarn-berry': 'YARN_ENABLE_IMMUTABLE_INSTALLS=false yarn install',
+};
+
+/** Path to Yarn Berry's yarn.js, for the berry fixture (classic `yarn` delegates to it via yarnPath). */
+export const berryPath = process.env.DEPSECT_TEST_BERRY_PATH;
+
+export async function makeFixture(manager: Manager = 'npm'): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), 'depsect-fixture-'));
   await mkdir(join(root, 'vendor'));
   for (const p of PACKAGES) {
@@ -42,12 +54,16 @@ export async function makeFixture(): Promise<string> {
     await pack(root, p, '2.0.0');
   }
   const git = (cmd: string) => shOk(`git ${cmd}`, { cwd: root });
-  const npmInstall = () => shOk('npm install --no-audit --no-fund --loglevel=error', { cwd: root });
+  const npmInstall = () => shOk(INSTALL[manager], { cwd: root });
 
   await git('init -q -b main');
   await git('config user.email test@example.com');
   await git('config user.name test');
-  await writeFile(join(root, '.gitignore'), 'node_modules/\nsrc-pkgs/\n');
+  await writeFile(join(root, '.gitignore'), 'node_modules/\nsrc-pkgs/\n.yarn/\n.pnp.*\n');
+  if (manager === 'yarn-berry') {
+    if (!berryPath) throw new Error('DEPSECT_TEST_BERRY_PATH is not set');
+    await writeFile(join(root, '.yarnrc.yml'), `yarnPath: ${JSON.stringify(berryPath)}\nnodeLinker: node-modules\nenableTelemetry: false\n`);
+  }
   await writeFile(join(root, 'test.js'), TEST);
   await writeFile(join(root, 'package.json'), manifest({}));
   await npmInstall();

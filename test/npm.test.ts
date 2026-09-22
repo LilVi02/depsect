@@ -3,7 +3,7 @@ import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { npm } from '../src/adapters/npm.ts';
+import { npm } from '../src/adapters/node.ts';
 import type { Snapshot } from '../src/adapters/types.ts';
 
 const snap = (man: object, lock: Record<string, string>): Snapshot => ({

@@ -5,10 +5,19 @@ import { test } from 'node:test';
 import { sh } from '../src/exec.ts';
 import { toMarkdown } from '../src/report.ts';
 import { run } from '../src/runner.ts';
-import { makeFixture } from './fixture.ts';
+import { berryPath, INSTALL, makeFixture, type Manager } from './fixture.ts';
 
-test('end to end: finds the broken bump and the broken pair in a real npm repo', { timeout: 180_000 }, async () => {
-  const repo = await makeFixture();
+const has = async (bin: string) => (await sh(`command -v ${bin}`, { cwd: process.cwd() })).code === 0;
+
+const managers: [Manager, string | false][] = [
+  ['npm', false],
+  ['pnpm', !(await has('pnpm')) && 'pnpm is not installed'],
+  ['yarn', !(await has('yarn')) && 'yarn is not installed'],
+  ['yarn-berry', (!(await has('yarn')) || !berryPath) && 'set DEPSECT_TEST_BERRY_PATH and install yarn'],
+];
+
+for (const [manager, skip] of managers) test(`end to end (${manager}): finds the broken bump and the broken pair`, { timeout: 300_000, skip }, async () => {
+  const repo = await makeFixture(manager);
   const report = await run({
     cwd: repo,
     base: 'HEAD~1',
@@ -20,6 +29,7 @@ test('end to end: finds the broken bump and the broken pair in a real npm repo',
     log: () => {},
   });
 
+  assert.equal(report.adapter, manager.replace('-berry', ''));
   assert.equal(report.status, 'found');
   assert.deepEqual(report.result!.culprits.map((c) => c.map((u) => u.name)), [['alpha'], ['delta', 'gamma']]);
   assert.deepEqual(report.result!.safe.map((u) => u.name), ['beta', 'epsilon', 'zeta']);
@@ -34,7 +44,7 @@ test('end to end: finds the broken bump and the broken pair in a real npm repo',
   // but picking which one to keep is a human decision.
   assert.match(deps.gamma, /gamma-1\.0\.0/);
   assert.match(deps.delta, /delta-1\.0\.0/);
-  assert.equal((await sh('npm install --no-audit --no-fund --loglevel=error && node test.js', { cwd: repo })).code, 0);
+  assert.equal((await sh(`${INSTALL[manager]} && node test.js`, { cwd: repo })).code, 0, 'safe set must pass after --apply-safe');
 
   // The worktree was cleaned up.
   const worktrees = await sh('git worktree list', { cwd: repo });
