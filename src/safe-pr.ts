@@ -106,7 +106,7 @@ export async function openSafePr(o: SafePrOptions): Promise<SafePr> {
     const server = process.env.GITHUB_SERVER_URL ?? 'https://github.com';
     const params = new URLSearchParams({ expand: '1', title: o.title, body: o.body });
     return {
-      url: `${server}/${o.repo}/compare/${encodeURIComponent(o.baseRef)}...${encodeURIComponent(o.branch)}?${params}`,
+      url: `${server}/${o.repo}/compare/${o.baseRef}...${o.branch}?${params}`,
       opened: false,
       hint:
         'GitHub Actions is not allowed to create pull requests in this repository. Enable "Allow GitHub Actions to create ' +

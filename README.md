@@ -66,7 +66,7 @@ It posts a report on the PR (and updates it on re-runs) with the culprit, the fa
   <a href="https://github.com/LilVi02/depsect-demo/pull/1"><img src="docs/pr-comment.png" alt="depsect report comment on a pull request: chalk 4.1.2 → 6.0.0 and date-fns 2.30.0 → 4.4.0 broke the build, the other 5 updates pass together" width="640"></a>
 </p>
 
-With `open-pr: true`, depsect also pushes a `depsect/safe-updates-<pr>` branch from the PR's head with only the safe updates applied, opens a pull request for it, and links it in the report. The branch is refreshed on every run.
+With `open-pr: true`, depsect also pushes a `depsect/safe-updates-<pr>` branch from the PR's head with only the safe updates applied, opens a pull request for it, and links it in the report. The branch is refreshed on every run. Repositories don't let `GITHUB_TOKEN` open pull requests by default: enable *Allow GitHub Actions to create and approve pull requests* (Settings → Actions → General) or pass a `pr-token`. Otherwise depsect still pushes the branch and links a prefilled "open a pull request" page.
 
 | Input | Default | |
 | --- | --- | --- |
