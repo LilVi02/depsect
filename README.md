@@ -122,4 +122,4 @@ npm run build   # compiles to dist/ (committed, used by the Action)
 
 ## License
 
-MIT
+[Apache License 2.0](LICENSE)
