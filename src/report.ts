@@ -12,10 +12,12 @@ export function formatDuration(ms: number): string {
 
 const ver = (u: Update) => [u.from ?? '_(new)_', u.to ?? '_(removed)_'];
 
+const label = (u: Update) => `\`${u.name}\`${u.kind === 'transitive' ? ' <sub>transitive</sub>' : ''}`;
+
 function table(updates: Update[]): string {
   const rows = updates.map((u) => {
     const [from, to] = ver(u);
-    return `| \`${u.name}\` | ${from} | ${to} |`;
+    return `| ${label(u)} | ${from} | ${to} |`;
   });
   return ['| Package | From | To |', '| --- | --- | --- |', ...rows].join('\n');
 }
@@ -27,7 +29,12 @@ function details(summary: string, body: string): string {
   return `<details><summary>${summary}</summary>\n\n${fence}text\n${body}\n${fence}\n\n</details>`;
 }
 
-export function toMarkdown(r: RunReport, testCommand: string): string {
+export interface MarkdownExtras {
+  /** The pull request with the safe updates, or a link to open it when it could not be created. */
+  safePr?: { url: string; opened: boolean; branch: string };
+}
+
+export function toMarkdown(r: RunReport, testCommand: string, extras: MarkdownExtras = {}): string {
   const out: string[] = [COMMENT_MARKER];
   const footer = (runs?: number) =>
     `<sub>${runs !== undefined ? `${plural(runs, 'run')} · ` : ''}${formatDuration(r.durationMs)} · ` +
@@ -42,7 +49,9 @@ export function toMarkdown(r: RunReport, testCommand: string): string {
       out.push(
         '## ✅ depsect: all updates pass',
         '',
-        `\`${testCommand}\` passes with all ${plural(r.updates.length, 'update')} applied, so the failure is probably flaky or unrelated to dependencies.`,
+        r.excluded.length
+          ? `\`${testCommand}\` passes with all ${plural(r.updates.length, 'update')} depsect could apply. The failure may come from a change it could not isolate (listed below), or be flaky.`
+          : `\`${testCommand}\` passes with all ${plural(r.updates.length, 'update')} applied, so the failure is probably flaky or unrelated to dependencies.`,
       );
       break;
 
@@ -84,11 +93,18 @@ export function toMarkdown(r: RunReport, testCommand: string): string {
           '',
         );
       }
+      if (extras.safePr?.opened) out.push(`➡️ Opened ${extras.safePr.url} with just the safe updates.`, '');
+      else if (extras.safePr) {
+        out.push(`➡️ Pushed \`${extras.safePr.branch}\` with just the safe updates: [open a pull request](${extras.safePr.url}).`, '');
+      }
       if (r.appliedSafe) out.push('The safe updates have been written to the working tree.', '');
       break;
     }
   }
 
+  if (r.excluded.length) {
+    out.push('', `> [!WARNING]\n> ${plural(r.excluded.length, 'change')} could not be tested on its own and ${r.excluded.length === 1 ? 'was' : 'were'} left out: ${r.excluded.map((e) => `\`${e}\``).join(', ')}`);
+  }
   for (const n of r.notes) out.push('', `> [!NOTE]\n> ${n}`);
   out.push('', footer(r.result?.runs));
   return out.join('\n').replace(/\n{3,}/g, '\n\n') + '\n';
@@ -113,14 +129,19 @@ export const colors: Paint = { red: sgr(31, 39), green: sgr(32, 39), bold: sgr(1
 export const noColors: Paint = { red: (s) => s, green: (s) => s, bold: (s) => s, dim: (s) => s };
 
 export function toTerminal(r: RunReport, testCommand: string, c: Paint = noColors): string {
-  const line = (u: Update) => `  ${c.bold(u.name)}  ${u.from ?? '(new)'} → ${u.to ?? '(removed)'}`;
+  const line = (u: Update) =>
+    `  ${c.bold(u.name)}  ${u.from ?? '(new)'} → ${u.to ?? '(removed)'}${u.kind === 'transitive' ? c.dim('  (transitive)') : ''}`;
   const out: string[] = [''];
   switch (r.status) {
     case 'no-updates':
       out.push('No dependency updates between base and head.');
       break;
     case 'no-failure':
-      out.push(`All ${plural(r.updates.length, 'update')} pass together. The failure is not caused by dependencies.`);
+      out.push(
+        r.excluded.length
+          ? `All ${plural(r.updates.length, 'update')} depsect could apply pass together. The failure may come from a change it could not isolate:`
+          : `All ${plural(r.updates.length, 'update')} pass together. The failure is not caused by dependencies.`,
+      );
       break;
     case 'base-broken':
       out.push(`'${testCommand}' already fails without any updates. Nothing to bisect.`, '', r.culpritLogs[0] ?? '');
@@ -137,6 +158,7 @@ export function toTerminal(r: RunReport, testCommand: string, c: Paint = noColor
       out.push('', c.dim(`${plural(res.runs, 'run')} in ${formatDuration(r.durationMs)}`));
     }
   }
+  if (r.excluded.length) out.push('', c.dim('not isolated:'), ...r.excluded.map((e) => c.dim(`  ${e}`)));
   for (const n of r.notes) out.push('', c.dim(`note: ${n}`));
   return out.join('\n');
 }

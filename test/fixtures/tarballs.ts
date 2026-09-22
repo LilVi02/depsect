@@ -3,7 +3,7 @@
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { shOk } from '../src/exec.ts';
+import { shOk } from '../../src/exec.ts';
 
 const PACKAGES = ['alpha', 'beta', 'delta', 'epsilon', 'gamma', 'zeta'];
 

@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import { sh } from '../src/exec.ts';
 import { toMarkdown } from '../src/report.ts';
 import { run } from '../src/runner.ts';
-import { berryPath, INSTALL, makeFixture, type Manager } from './fixture.ts';
+import { berryPath, INSTALL, makeFixture, type Manager } from './fixtures/tarballs.ts';
 
 const has = async (bin: string) => (await sh(`command -v ${bin}`, { cwd: process.cwd() })).code === 0;
 
