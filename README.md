@@ -1,6 +1,6 @@
 # depsect
 
-[![npm](https://img.shields.io/npm/v/depsect)](https://www.npmjs.com/package/depsect) [![ci](https://github.com/LilVi02/depsect/actions/workflows/ci.yml/badge.svg)](https://github.com/LilVi02/depsect/actions/workflows/ci.yml) [![license](https://img.shields.io/github/license/LilVi02/depsect)](LICENSE)
+[![npm](https://img.shields.io/npm/v/depsect)](https://www.npmjs.com/package/depsect) [![ci](https://github.com/LilVi02/depsect/actions/workflows/ci.yml/badge.svg)](https://github.com/LilVi02/depsect/actions/workflows/ci.yml) [![license](https://img.shields.io/github/license/LilVi02/depsect?label=license)](LICENSE)
 
 **`git bisect` for grouped dependency updates.**
 Dependabot bumped 23 packages in one PR and CI is red. Which one broke it? `depsect` tells you, and hands you the other 22 already verified green.
