@@ -1,10 +1,19 @@
-import { copyFile } from 'node:fs/promises';
+import { copyFile, realpath } from 'node:fs/promises';
 import { join, posix } from 'node:path';
 import { adapters } from "./adapters/index.js";
 import { BaseBrokenError, findCulprits, NoFailureError } from "./bisect.js";
 import { sh } from "./exec.js";
 import { addWorktree, readAt, repoRoot, resolveRef } from "./git.js";
-const tail = (s, lines = 40) => s.trimEnd().split('\n').slice(-lines).join('\n');
+// Test runners print the interesting part (the first failure) long before the
+// summary, so start the excerpt at the first line that looks like an error.
+const ERROR_LINE = /\b(not ok|FAIL(ED)?|ERR!?|[A-Za-z]*Error|panicked)\b|[✕✖×●]/;
+export function excerpt(output, lines = 30) {
+    const all = output.trimEnd().split('\n');
+    const cmd = all[0]?.startsWith('$ ') ? [all.shift()] : [];
+    const i = all.findIndex((l) => ERROR_LINE.test(l));
+    const body = i < 0 ? all.slice(-lines) : all.slice(Math.max(0, i - 2), i - 2 + lines);
+    return [...cmd, ...body].join('\n');
+}
 async function snapshot(root, ref, dir, files) {
     const snap = {};
     for (const f of files)
@@ -41,6 +50,9 @@ export async function run(opts) {
     const projectDir = join(wt.path, dir);
     const install = opts.install ?? adapter.installCommand(headSnap);
     const logs = new Map();
+    // Show paths relative to the project instead of the throwaway worktree.
+    const wtPaths = [...new Set([wt.path, await realpath(wt.path)])];
+    const clean = (s) => wtPaths.reduce((acc, p) => acc.split(`${p}/`).join('').split(p).join('.'), s);
     const keyOf = (subset) => subset.map((u) => u.id).join('\0');
     const apply = async (subset) => {
         await adapter.write(projectDir, baseSnap, headSnap, subset);
@@ -51,7 +63,7 @@ export async function run(opts) {
         const inst = await apply(subset);
         if (!inst.ok) {
             // An update that breaks installation is as much a culprit as one that breaks tests.
-            logs.set(keyOf(subset), inst.output);
+            logs.set(keyOf(subset), clean(inst.output));
             return 'fail';
         }
         let res;
@@ -60,7 +72,7 @@ export async function run(opts) {
             if (res.code === 0)
                 return 'pass';
         }
-        logs.set(keyOf(subset), `$ ${opts.test}\n${res.timedOut ? '(timed out)\n' : ''}${res.output}`);
+        logs.set(keyOf(subset), clean(`$ ${opts.test}\n${res.timedOut ? '(timed out)\n' : ''}${res.output}`));
         return 'fail';
     };
     try {
@@ -70,7 +82,7 @@ export async function run(opts) {
         });
         report.status = 'found';
         report.result = result;
-        report.culpritLogs = result.culprits.map((c) => tail(logs.get(keyOf(c)) ?? ''));
+        report.culpritLogs = result.culprits.map((c) => excerpt(logs.get(keyOf(c)) ?? ''));
         if (opts.applySafe) {
             const inst = await apply(result.safe);
             if (!inst.ok)
@@ -83,7 +95,7 @@ export async function run(opts) {
     catch (err) {
         if (err instanceof BaseBrokenError) {
             report.status = 'base-broken';
-            report.culpritLogs = [tail(logs.get('') ?? '')];
+            report.culpritLogs = [excerpt(logs.get('') ?? '')];
         }
         else if (err instanceof NoFailureError) {
             report.status = 'no-failure';

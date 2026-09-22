@@ -52,3 +52,14 @@ test('write applies only the chosen subset', async () => {
   assert.deepEqual(man.devDependencies, { vitest: '^1.0.0' }); // untouched
   assert.equal(await readFile(join(dir, 'package-lock.json'), 'utf8'), base['package-lock.json']);
 });
+
+test('failure excerpt starts at the first error, not the summary', async () => {
+  const { excerpt } = await import('../src/runner.ts');
+  const tap = ['$ npm test', '# Subtest: a', 'ok 1 - a', '# Subtest: b', 'not ok 2 - b', "  error: 'x is not a function'",
+    ...Array.from({ length: 50 }, (_, i) => `# summary ${i}`)].join('\n');
+  const out = excerpt(tap).split('\n');
+  assert.equal(out[0], '$ npm test');
+  assert.ok(out.includes('not ok 2 - b'));
+  assert.ok(out.includes("  error: 'x is not a function'"));
+  assert.equal(excerpt('$ make\nall good\nbut exit 1').split('\n').length, 3);
+});

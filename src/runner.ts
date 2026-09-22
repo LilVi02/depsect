@@ -1,4 +1,4 @@
-import { copyFile } from 'node:fs/promises';
+import { copyFile, realpath } from 'node:fs/promises';
 import { join, posix } from 'node:path';
 import { adapters } from './adapters/index.ts';
 import type { Adapter, Snapshot, Update } from './adapters/types.ts';
@@ -38,7 +38,17 @@ export interface RunReport {
   appliedSafe: boolean;
 }
 
-const tail = (s: string, lines = 40) => s.trimEnd().split('\n').slice(-lines).join('\n');
+// Test runners print the interesting part (the first failure) long before the
+// summary, so start the excerpt at the first line that looks like an error.
+const ERROR_LINE = /\b(not ok|FAIL(ED)?|ERR!?|[A-Za-z]*Error|panicked)\b|[✕✖×●]/;
+
+export function excerpt(output: string, lines = 30): string {
+  const all = output.trimEnd().split('\n');
+  const cmd = all[0]?.startsWith('$ ') ? [all.shift()!] : [];
+  const i = all.findIndex((l) => ERROR_LINE.test(l));
+  const body = i < 0 ? all.slice(-lines) : all.slice(Math.max(0, i - 2), i - 2 + lines);
+  return [...cmd, ...body].join('\n');
+}
 
 async function snapshot(root: string, ref: string, dir: string, files: string[]): Promise<Snapshot> {
   const snap: Snapshot = {};
@@ -78,6 +88,9 @@ export async function run(opts: RunOptions): Promise<RunReport> {
   const projectDir = join(wt.path, dir);
   const install = opts.install ?? adapter.installCommand(headSnap);
   const logs = new Map<string, string>();
+  // Show paths relative to the project instead of the throwaway worktree.
+  const wtPaths = [...new Set([wt.path, await realpath(wt.path)])];
+  const clean = (s: string) => wtPaths.reduce((acc, p) => acc.split(`${p}/`).join('').split(p).join('.'), s);
   const keyOf = (subset: Update[]) => subset.map((u) => u.id).join('\0');
 
   const apply = async (subset: Update[]): Promise<{ ok: boolean; output: string }> => {
@@ -90,7 +103,7 @@ export async function run(opts: RunOptions): Promise<RunReport> {
     const inst = await apply(subset);
     if (!inst.ok) {
       // An update that breaks installation is as much a culprit as one that breaks tests.
-      logs.set(keyOf(subset), inst.output);
+      logs.set(keyOf(subset), clean(inst.output));
       return 'fail';
     }
     let res;
@@ -98,7 +111,7 @@ export async function run(opts: RunOptions): Promise<RunReport> {
       res = await sh(opts.test, { cwd: projectDir, timeoutMs: opts.timeoutMs });
       if (res.code === 0) return 'pass';
     }
-    logs.set(keyOf(subset), `$ ${opts.test}\n${res!.timedOut ? '(timed out)\n' : ''}${res!.output}`);
+    logs.set(keyOf(subset), clean(`$ ${opts.test}\n${res!.timedOut ? '(timed out)\n' : ''}${res!.output}`));
     return 'fail';
   };
 
@@ -110,7 +123,7 @@ export async function run(opts: RunOptions): Promise<RunReport> {
     });
     report.status = 'found';
     report.result = result;
-    report.culpritLogs = result.culprits.map((c) => tail(logs.get(keyOf(c)) ?? ''));
+    report.culpritLogs = result.culprits.map((c) => excerpt(logs.get(keyOf(c)) ?? ''));
 
     if (opts.applySafe) {
       const inst = await apply(result.safe);
@@ -121,7 +134,7 @@ export async function run(opts: RunOptions): Promise<RunReport> {
   } catch (err) {
     if (err instanceof BaseBrokenError) {
       report.status = 'base-broken';
-      report.culpritLogs = [tail(logs.get('') ?? '')];
+      report.culpritLogs = [excerpt(logs.get('') ?? '')];
     } else if (err instanceof NoFailureError) {
       report.status = 'no-failure';
     } else throw err;

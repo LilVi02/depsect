@@ -94,8 +94,26 @@ export function toMarkdown(r: RunReport, testCommand: string): string {
   return out.join('\n').replace(/\n{3,}/g, '\n\n') + '\n';
 }
 
-export function toTerminal(r: RunReport, testCommand: string): string {
-  const line = (u: Update) => `  ${u.name}  ${u.from ?? '(new)'} → ${u.to ?? '(removed)'}`;
+/** The few lines of a failure excerpt worth showing in a terminal. */
+function highlights(log: string, max = 6): string[] {
+  const lines = log.split('\n').filter((l) => !l.startsWith('$ '));
+  const hits = lines.filter((l) => /\b(not ok|FAIL(ED)?)\b|error|Error|expected|actual|[✕✖×●]/.test(l));
+  return (hits.length ? hits : lines).slice(0, max).map((l) => l.trim());
+}
+
+export interface Paint {
+  red: (s: string) => string;
+  green: (s: string) => string;
+  bold: (s: string) => string;
+  dim: (s: string) => string;
+}
+
+const sgr = (open: number, close: number) => (s: string) => `\x1b[${open}m${s}\x1b[${close}m`;
+export const colors: Paint = { red: sgr(31, 39), green: sgr(32, 39), bold: sgr(1, 22), dim: sgr(2, 22) };
+export const noColors: Paint = { red: (s) => s, green: (s) => s, bold: (s) => s, dim: (s) => s };
+
+export function toTerminal(r: RunReport, testCommand: string, c: Paint = noColors): string {
+  const line = (u: Update) => `  ${c.bold(u.name)}  ${u.from ?? '(new)'} → ${u.to ?? '(removed)'}`;
   const out: string[] = [''];
   switch (r.status) {
     case 'no-updates':
@@ -110,15 +128,15 @@ export function toTerminal(r: RunReport, testCommand: string): string {
     case 'found': {
       const res = r.result!;
       res.culprits.forEach((set, i) => {
-        out.push(set.length === 1 ? 'CULPRIT:' : 'CULPRIT (only fails in combination):');
+        out.push(c.red(c.bold(set.length === 1 ? 'CULPRIT:' : 'CULPRIT (only fails in combination):')));
         out.push(...set.map(line));
-        if (r.culpritLogs[i]) out.push('', r.culpritLogs[i]!.split('\n').slice(-15).map((l) => `  │ ${l}`).join('\n'));
+        if (r.culpritLogs[i]) out.push(...highlights(r.culpritLogs[i]!).map((l) => c.dim(`  │ ${l}`)));
         out.push('');
       });
-      if (res.safe.length) out.push(`SAFE (${res.safe.length}, verified together):`, ...res.safe.map(line));
-      out.push('', `${plural(res.runs, 'run')} in ${formatDuration(r.durationMs)}`);
+      if (res.safe.length) out.push(c.green(c.bold(`SAFE (${res.safe.length}, verified together):`)), ...res.safe.map(line));
+      out.push('', c.dim(`${plural(res.runs, 'run')} in ${formatDuration(r.durationMs)}`));
     }
   }
-  for (const n of r.notes) out.push('', `note: ${n}`);
+  for (const n of r.notes) out.push('', c.dim(`note: ${n}`));
   return out.join('\n');
 }

@@ -3,32 +3,11 @@
 **`git bisect` for grouped dependency updates.**
 Dependabot bumped 23 packages in one PR and CI is red. Which one broke it? `depsect` tells you, and hands you the other 22 already verified green.
 
-```text
-$ npx depsect --test "npm test"
+<p align="center">
+  <img src="docs/demo.svg" alt="depsect bisecting a grouped update of 7 real npm packages: chalk and date-fns are the culprits, the other 5 are verified safe" width="760">
+</p>
 
-npm: 6 dependency update(s) between ee891fc and c09efa7
-run 1: PASS with (no updates)
-run 2: FAIL with alpha, beta, delta, epsilon, gamma, zeta
-run 3: FAIL with alpha, beta, delta
-...
-run 13: PASS with beta, epsilon, zeta
-
-CULPRIT:
-  alpha  1.0.0 → 2.0.0
-  │ alpha@2 changed its API
-
-CULPRIT (only fails in combination):
-  delta  1.0.0 → 2.0.0
-  gamma  1.0.0 → 2.0.0
-  │ gamma@2 is incompatible with delta@2
-
-SAFE (3, verified together):
-  beta  1.0.0 → 2.0.0
-  epsilon  1.0.0 → 2.0.0
-  zeta  1.0.0 → 2.0.0
-
-13 runs in 5s
-```
+<p align="center"><sub>A real run on <a href="https://github.com/LilVi02/depsect-demo">depsect-demo</a>: 7 real npm packages bumped in one PR. Install and test time is compressed.</sub></p>
 
 ## Why
 
@@ -95,9 +74,9 @@ Outputs: `status` (`found` / `no-failure` / `base-broken` / `no-updates`), `culp
 ## CLI
 
 ```bash
-npx depsect --test "npm test"                        # compares HEAD~1 → HEAD
-npx depsect --base origin/main --test "npm run build && npm test"
-npx depsect --test "npm test" --apply-safe           # keep only the safe bumps
+npx github:LilVi02/depsect --test "npm test"              # compares HEAD~1 → HEAD
+npx github:LilVi02/depsect --base origin/main --test "npm run build && npm test"
+npx github:LilVi02/depsect --test "npm test" --apply-safe # keep only the safe bumps
 ```
 
 depsect works in a throwaway `git worktree`, so your checkout and `node_modules` stay untouched (unless you pass `--apply-safe`). Run `depsect --help` for all options. Exit codes: `0` no culprit, `1` culprit found, `2` base already broken, `3` error.

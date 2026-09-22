@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util';
-import { toMarkdown, toTerminal } from "./report.js";
+import { colors, noColors, toMarkdown, toTerminal } from "./report.js";
 import { run } from "./runner.js";
 const HELP = `depsect: find which dependency update in a grouped PR broke your build
 
@@ -43,6 +43,9 @@ async function main() {
         return values.help ? 0 : 3;
     }
     const quiet = values.json || values.markdown;
+    const useColor = process.stdout.isTTY && !process.env.NO_COLOR;
+    const c = useColor && !quiet ? colors : noColors;
+    const paintRun = (m) => m.replace(/^(run \d+: )(PASS|FAIL)/, (_, pre, o) => c.dim(pre) + (o === 'PASS' ? c.green(o) : c.red(o)));
     const report = await run({
         cwd: process.cwd(),
         base: values.base,
@@ -53,14 +56,14 @@ async function main() {
         retries: Number(values.retries),
         timeoutMs: values.timeout ? Number(values.timeout) * 60_000 : undefined,
         applySafe: values['apply-safe'],
-        log: (m) => (quiet ? console.error(m) : console.log(m)),
+        log: (m) => (quiet ? console.error(m) : console.log(paintRun(m))),
     });
     if (values.json)
         console.log(JSON.stringify(report, null, 2));
     else if (values.markdown)
         console.log(toMarkdown(report, values.test));
     else
-        console.log(toTerminal(report, values.test));
+        console.log(toTerminal(report, values.test, c));
     return EXIT[report.status];
 }
 main().then((code) => process.exit(code), (err) => {
