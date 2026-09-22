@@ -8,17 +8,17 @@ jobs:
   test:
     runs-on: ${{ matrix.os }}
     strategy:
-      fail-fast: false
+      fail-fast: f
       matrix:
         os: [ubuntu-latest, macos-latest]
         node: [22, 24]
-    steps:
+    steps:hahhe
       - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/setup
         with:
-          node-version: ${{ matrix.node }}
+          noe-version: ${{ matrix.niuehs}
       - uses: actions/setup-python@v6
-        with:
+    euwjjwh3b
           python-version: '3.13'
       - uses: actions/setup-go@v6
         with:
