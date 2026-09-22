@@ -56,6 +56,10 @@ Using pnpm or Yarn? Add `pnpm/action-setup` or `corepack enable` before depsect,
 
 It posts a report on the PR (and updates it on re-runs) with the culprit, the failing output, and the list of safe updates. The same report goes to the job summary.
 
+<p align="center">
+  <a href="https://github.com/LilVi02/depsect-demo/pull/1"><img src="docs/pr-comment.png" alt="depsect report comment on a pull request: chalk 4.1.2 → 6.0.0 and date-fns 2.30.0 → 4.4.0 broke the build, the other 5 updates pass together" width="640"></a>
+</p>
+
 | Input | Default | |
 | --- | --- | --- |
 | `test-command` | *required* | Command that must pass. |
