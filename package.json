@@ -1,0 +1,40 @@
+{
+  "name": "depsect",
+  "version": "0.1.0",
+  "description": "git bisect for grouped dependency updates: find which bump in a Dependabot/Renovate PR broke your build.",
+  "type": "module",
+  "bin": {
+    "depsect": "dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test --experimental-strip-types --no-warnings test/*.test.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "bisect",
+    "dependabot",
+    "renovate",
+    "dependencies",
+    "lockfile",
+    "ci",
+    "github-action",
+    "delta-debugging"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/LilVi02/depsect.git"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.0"
+  }
+}

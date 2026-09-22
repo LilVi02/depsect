@@ -1,0 +1,61 @@
+name: depsect
+description: git bisect for grouped dependency updates. Finds which bump in a Dependabot/Renovate PR broke the build.
+author: LilVi02
+branding:
+  icon: search
+  color: orange
+
+inputs:
+  test-command:
+    description: Command that must pass, e.g. "npm test" or "npm run build && npm test".
+    required: true
+  install-command:
+    description: Install command. Defaults to the package manager's install (npm install).
+    required: false
+  base:
+    description: Ref with the old dependencies. Defaults to the PR base commit.
+    required: false
+  head:
+    description: Ref with the new dependencies.
+    required: false
+    default: HEAD
+  working-directory:
+    description: Project directory relative to the repository root.
+    required: false
+    default: .
+  retries:
+    description: Re-run a failing test this many times before trusting it (for flaky suites).
+    required: false
+    default: '0'
+  timeout-minutes:
+    description: Per-command timeout in minutes (0 = none).
+    required: false
+    default: '0'
+  apply-safe:
+    description: Write the verified-safe updates to the working tree, e.g. to open a PR with them.
+    required: false
+    default: 'false'
+  comment:
+    description: Post (or update) a report comment on the pull request.
+    required: false
+    default: 'true'
+  fail-on-culprit:
+    description: Fail the step when a culprit is found.
+    required: false
+    default: 'true'
+  github-token:
+    description: Token used to comment on the PR.
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  status:
+    description: One of found, no-failure, base-broken, no-updates.
+  culprits:
+    description: JSON array of culprit sets, e.g. [["postcss"],["react","react-dom"]].
+  safe:
+    description: JSON array of updates verified to pass together.
+
+runs:
+  using: node24
+  main: dist/action.js
