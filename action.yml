@@ -10,7 +10,7 @@ inputs:
     description: Command that must pass, e.g. "npm test" or "npm run build && npm test".
     required: true
   install-command:
-    description: Install command. Defaults to the package manager's own (npm install, pnpm install, yarn install, uv sync --frozen, poetry sync, cargo fetch, go mod download).
+    description: Install command. Defaults to the package manager's own (npm install, pnpm install, yarn install, uv sync --frozen, poetry sync, cargo fetch, go mod download, composer install, bundle install; nothing for Maven and Gradle, which resolve during the build).
     required: false
   base:
     description: Ref with the old dependencies. Defaults to the PR base commit.
