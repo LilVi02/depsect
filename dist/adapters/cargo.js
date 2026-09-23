@@ -9,6 +9,7 @@ import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { findEntry, findTable, parseToml, splice } from "../toml.js";
 import { showVersions } from "./types.js";
+import { matchMembers } from "../workspace.js";
 const MANIFEST = 'Cargo.toml';
 const LOCKFILE = 'Cargo.lock';
 const table = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
@@ -105,6 +106,11 @@ export const cargo = {
     detect(head) {
         return head[MANIFEST] != null && head[LOCKFILE] != null;
     },
+    members(snap, paths) {
+        const ws = table(parseToml(snap[MANIFEST] ?? '').workspace);
+        const list = (v) => (Array.isArray(v) ? v.map(String) : []);
+        return matchMembers(list(ws.members), paths, MANIFEST, list(ws.exclude));
+    },
     diff(base, head) {
         const b = parseCargoLock(base[LOCKFILE]);
         const h = parseCargoLock(head[LOCKFILE]);
@@ -143,11 +149,15 @@ export const cargo = {
         return { updates, excluded };
     },
     async write(dir, base, head, subset) {
-        let manifest = base[MANIFEST] ?? '';
-        const headManifest = head[MANIFEST] ?? '';
-        for (const u of subset.filter((x) => x.kind === 'direct'))
-            manifest = editManifest(manifest, headManifest, u.name);
-        await writeFile(join(dir, MANIFEST), manifest);
+        // The root manifest and every workspace member's: a direct update takes
+        // head's declaration wherever it changed.
+        const manifests = [...new Set([...Object.keys(base), ...Object.keys(head)])].filter((k) => (k === MANIFEST || k.endsWith(`/${MANIFEST}`)) && head[k] != null);
+        for (const m of manifests) {
+            let text = base[m] ?? head[m];
+            for (const u of subset.filter((x) => x.kind === 'direct'))
+                text = editManifest(text, head[m], u.name);
+            await writeFile(join(dir, m), text);
+        }
         await writeFile(join(dir, LOCKFILE), base[LOCKFILE] ?? '');
         const q = (s) => `'${s}'`;
         const cmds = [];

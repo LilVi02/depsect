@@ -1,6 +1,6 @@
 {
   "name": "depsect",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "git bisect for grouped dependency updates: find which bump in a Dependabot/Renovate PR broke your build.",
   "type": "module",
   "bin": {

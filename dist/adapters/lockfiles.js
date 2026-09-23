@@ -51,8 +51,10 @@ function add(map, name, version) {
 }
 const DEP_SECTIONS = ['dependencies', 'devDependencies', 'optionalDependencies'];
 export const npmLock = {
-    direct(text, name) {
-        return JSON.parse(text).packages?.[`node_modules/${name}`]?.version;
+    direct(text, name, _spec, importer = '') {
+        const pkgs = JSON.parse(text).packages ?? {};
+        // A workspace member's copy is nested under it unless it was hoisted to the root.
+        return (importer && pkgs[`${importer}/node_modules/${name}`]?.version) || pkgs[`node_modules/${name}`]?.version;
     },
     all(text) {
         const out = new Map();
@@ -69,9 +71,9 @@ export const npmLock = {
 // Peer-dependency suffixes like "18.3.1(react@18.3.1)" are not part of the version.
 const stripPeers = (v) => v.replace(/\(.*$/, '');
 export const pnpmLock = {
-    direct(text, name) {
+    direct(text, name, _spec, importerPath = '') {
         const tree = parseYamlish(text);
-        const importer = sub(sub(tree, 'importers'), '.') ?? tree;
+        const importer = sub(sub(tree, 'importers'), importerPath || '.') ?? tree;
         for (const s of DEP_SECTIONS) {
             const entry = sub(importer, s)?.[name];
             if (typeof entry === 'string')

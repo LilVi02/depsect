@@ -74,7 +74,7 @@ With `open-pr: true`, depsect also pushes a `depsect/safe-updates-<pr>` branch f
 | `install-command` | auto | How to install dependencies. Defaults to the package manager's own (see below). |
 | `base` | PR base commit | Ref with the old dependencies. |
 | `head` | `HEAD` | Ref with the new dependencies. |
-| `working-directory` | `.` | Project directory (for monorepos). |
+| `working-directory` | `.` | Where to run. Projects changed below it are found automatically (see [Monorepos](#monorepos)). |
 | `transitive` | `auto` | Bisect transitive (lockfile-only) changes: `auto` does it when no direct dependency changed (e.g. lock file maintenance); `always`; `never`. |
 | `open-pr` | `false` | Open a PR with just the safe updates. Needs `contents: write`. |
 | `pr-token` | `github-token` | Token for the safe-updates PR. Pushes made with the default `GITHUB_TOKEN` don't trigger other workflows, so pass a PAT or GitHub App token if CI should run on that PR. |
@@ -113,6 +113,15 @@ The package manager is picked from the lockfile. Each one applies a subset of up
 
 Python environments hold one version of each package, so for uv and Poetry the composed lockfile is exactly "base, with these packages from head" (plus any new packages they need), installed as-is.
 
+## Monorepos
+
+depsect finds every project a PR touches on its own. For each changed manifest or lockfile it walks up to the nearest directory with a lockfile, so:
+
+- **workspaces** are one project: npm, pnpm and Yarn workspaces, Cargo workspaces and uv workspaces are read as a whole, and a direct update is applied in whichever member manifests declare it;
+- **independent projects** changed by the same PR (say `web/` with npm and `api/` with Go) are bisected together, each update applied in its own project. The report adds a Project column.
+
+The test command runs from the working directory, so give it one that covers everything, e.g. `npm test --prefix web && (cd api && go test ./...)`. Projects whose part of a subset did not change are not reinstalled between runs.
+
 ## How it works
 
 1. Read the manifest and lockfile at `base` and `head` and list every package whose resolved version changed, direct or transitive.
@@ -132,14 +141,14 @@ Python environments hold one version of each package, so for uv and Poetry the c
 - [x] Bisect transitive-only lockfile changes
 - [x] Open a PR with the safe updates from the Action
 - [ ] Run independent subsets in parallel
-- [ ] Workspaces and monorepos with several lockfiles in one PR
+- [x] Workspaces and monorepos with several lockfiles in one PR
 - [ ] Bundler, Composer, Maven/Gradle
 
 Known limitations:
 
 - For npm, pnpm and Yarn, applying a direct update lets the package manager re-resolve that package's own subtree, which can differ slightly from the bot's lockfile. This almost never changes the verdict.
 - pnpm and Yarn cannot force a transitive package that is installed at several versions side by side; such changes are listed in the report as not isolated.
-- For Cargo workspaces, only the root `Cargo.toml` is edited. An update that also had to change a member crate's `Cargo.toml` cannot be applied faithfully yet.
+- `install-command`, when set, is used for every project in the run.
 
 ## Development
 

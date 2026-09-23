@@ -6,12 +6,14 @@ export function formatDuration(ms) {
 }
 const ver = (u) => [u.from ?? '_(new)_', u.to ?? '_(removed)_'];
 const label = (u) => `\`${u.name}\`${u.kind === 'transitive' ? ' <sub>transitive</sub>' : ''}`;
-function table(updates) {
+/** With several projects, tables get a Project column. */
+function table(updates, multi = false) {
     const rows = updates.map((u) => {
         const [from, to] = ver(u);
-        return `| ${label(u)} | ${from} | ${to} |`;
+        return `| ${multi ? `\`${u.project || '.'}\` | ` : ''}${label(u)} | ${from} | ${to} |`;
     });
-    return ['| Package | From | To |', '| --- | --- | --- |', ...rows].join('\n');
+    const head = multi ? ['| Project | Package | From | To |', '| --- | --- | --- | --- |'] : ['| Package | From | To |', '| --- | --- | --- |'];
+    return [...head, ...rows].join('\n');
 }
 function details(summary, body) {
     if (!body.trim())
@@ -22,6 +24,7 @@ function details(summary, body) {
 }
 export function toMarkdown(r, testCommand, extras = {}) {
     const out = [COMMENT_MARKER];
+    const multi = r.projects.length > 1;
     const footer = (runs) => `<sub>${runs !== undefined ? `${plural(runs, 'run')} · ` : ''}${formatDuration(r.durationMs)} · ` +
         `${r.adapter} · [depsect](https://github.com/LilVi02/depsect)</sub>`;
     switch (r.status) {
@@ -45,10 +48,10 @@ export function toMarkdown(r, testCommand, extras = {}) {
                     out.push(`### Culprit ${i + 1}`, '');
                 out.push(set.length === 1
                     ? `This update makes \`${testCommand}\` fail:`
-                    : `These updates pass **on their own** but break \`${testCommand}\` **together**:`, '', table(set), '', details('Failing output', r.culpritLogs[i] ?? ''), '');
+                    : `These updates pass **on their own** but break \`${testCommand}\` **together**:`, '', table(set, multi), '', details('Failing output', r.culpritLogs[i] ?? ''), '');
             });
             if (res.safe.length > 0) {
-                out.push(`✅ **The other ${plural(res.safe.length, 'update')} pass together** (verified):`, '', `<details><summary>Show safe updates</summary>\n\n${table(res.safe)}\n\n</details>`, '');
+                out.push(`✅ **The other ${plural(res.safe.length, 'update')} pass together** (verified):`, '', `<details><summary>Show safe updates</summary>\n\n${table(res.safe, multi)}\n\n</details>`, '');
             }
             if (extras.safePr?.opened)
                 out.push(`➡️ Opened ${extras.safePr.url} with just the safe updates.`, '');
@@ -78,7 +81,9 @@ const sgr = (open, close) => (s) => `\x1b[${open}m${s}\x1b[${close}m`;
 export const colors = { red: sgr(31, 39), green: sgr(32, 39), bold: sgr(1, 22), dim: sgr(2, 22) };
 export const noColors = { red: (s) => s, green: (s) => s, bold: (s) => s, dim: (s) => s };
 export function toTerminal(r, testCommand, c = noColors) {
-    const line = (u) => `  ${c.bold(u.name)}  ${u.from ?? '(new)'} → ${u.to ?? '(removed)'}${u.kind === 'transitive' ? c.dim('  (transitive)') : ''}`;
+    const multi = r.projects.length > 1;
+    const line = (u) => `  ${c.bold(u.name)}  ${u.from ?? '(new)'} → ${u.to ?? '(removed)'}${u.kind === 'transitive' ? c.dim('  (transitive)') : ''}` +
+        (multi ? c.dim(`  [${u.project || '.'}]`) : '');
     const out = [''];
     switch (r.status) {
         case 'no-updates':

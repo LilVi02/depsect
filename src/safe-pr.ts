@@ -27,7 +27,7 @@ export interface SafePrOptions {
 }
 
 const q = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
-const row = (u: Update) => `| \`${u.name}\` | ${u.from ?? '_(new)_'} | ${u.to ?? '_(removed)_'} |`;
+const row = (u: Update) => `| \`${u.name}\`${u.project ? ` <sub>${u.project}</sub>` : ''} | ${u.from ?? '_(new)_'} | ${u.to ?? '_(removed)_'} |`;
 const tableOf = (us: Update[]) => ['| Package | From | To |', '| --- | --- | --- |', ...us.map(row)].join('\n');
 
 export function safePrTitle(r: RunReport, pr: number): string {

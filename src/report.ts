@@ -14,12 +14,14 @@ const ver = (u: Update) => [u.from ?? '_(new)_', u.to ?? '_(removed)_'];
 
 const label = (u: Update) => `\`${u.name}\`${u.kind === 'transitive' ? ' <sub>transitive</sub>' : ''}`;
 
-function table(updates: Update[]): string {
+/** With several projects, tables get a Project column. */
+function table(updates: Update[], multi = false): string {
   const rows = updates.map((u) => {
     const [from, to] = ver(u);
-    return `| ${label(u)} | ${from} | ${to} |`;
+    return `| ${multi ? `\`${u.project || '.'}\` | ` : ''}${label(u)} | ${from} | ${to} |`;
   });
-  return ['| Package | From | To |', '| --- | --- | --- |', ...rows].join('\n');
+  const head = multi ? ['| Project | Package | From | To |', '| --- | --- | --- | --- |'] : ['| Package | From | To |', '| --- | --- | --- |'];
+  return [...head, ...rows].join('\n');
 }
 
 function details(summary: string, body: string): string {
@@ -36,6 +38,7 @@ export interface MarkdownExtras {
 
 export function toMarkdown(r: RunReport, testCommand: string, extras: MarkdownExtras = {}): string {
   const out: string[] = [COMMENT_MARKER];
+  const multi = r.projects.length > 1;
   const footer = (runs?: number) =>
     `<sub>${runs !== undefined ? `${plural(runs, 'run')} · ` : ''}${formatDuration(r.durationMs)} · ` +
     `${r.adapter} · [depsect](https://github.com/LilVi02/depsect)</sub>`;
@@ -79,7 +82,7 @@ export function toMarkdown(r: RunReport, testCommand: string, extras: MarkdownEx
             ? `This update makes \`${testCommand}\` fail:`
             : `These updates pass **on their own** but break \`${testCommand}\` **together**:`,
           '',
-          table(set),
+          table(set, multi),
           '',
           details('Failing output', r.culpritLogs[i] ?? ''),
           '',
@@ -89,7 +92,7 @@ export function toMarkdown(r: RunReport, testCommand: string, extras: MarkdownEx
         out.push(
           `✅ **The other ${plural(res.safe.length, 'update')} pass together** (verified):`,
           '',
-          `<details><summary>Show safe updates</summary>\n\n${table(res.safe)}\n\n</details>`,
+          `<details><summary>Show safe updates</summary>\n\n${table(res.safe, multi)}\n\n</details>`,
           '',
         );
       }
@@ -129,8 +132,10 @@ export const colors: Paint = { red: sgr(31, 39), green: sgr(32, 39), bold: sgr(1
 export const noColors: Paint = { red: (s) => s, green: (s) => s, bold: (s) => s, dim: (s) => s };
 
 export function toTerminal(r: RunReport, testCommand: string, c: Paint = noColors): string {
+  const multi = r.projects.length > 1;
   const line = (u: Update) =>
-    `  ${c.bold(u.name)}  ${u.from ?? '(new)'} → ${u.to ?? '(removed)'}${u.kind === 'transitive' ? c.dim('  (transitive)') : ''}`;
+    `  ${c.bold(u.name)}  ${u.from ?? '(new)'} → ${u.to ?? '(removed)'}${u.kind === 'transitive' ? c.dim('  (transitive)') : ''}` +
+    (multi ? c.dim(`  [${u.project || '.'}]`) : '');
   const out: string[] = [''];
   switch (r.status) {
     case 'no-updates':

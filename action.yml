@@ -20,7 +20,7 @@ inputs:
     required: false
     default: HEAD
   working-directory:
-    description: Project directory relative to the repository root.
+    description: Directory to run in, relative to the repository root. Every project changed below it (including workspace members) is found automatically, and the test command runs here.
     required: false
     default: .
   retries:

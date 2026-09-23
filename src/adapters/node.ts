@@ -1,12 +1,14 @@
 // JavaScript package managers. They share package.json semantics and differ
 // in the lockfile format, the install command, and how a transitive package
 // can be forced to a version.
-import { writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join, posix } from 'node:path';
+import { matchMembers } from '../workspace.ts';
 import { isBerry, npmLock, pnpmLock, yarnLock, type LockReader } from './lockfiles.ts';
 import { sameSet, showVersions, type Adapter, type Snapshot, type Update } from './types.ts';
 
 const MANIFEST = 'package.json';
+const PNPM_WORKSPACE = 'pnpm-workspace.yaml';
 const SECTIONS = ['dependencies', 'devDependencies', 'optionalDependencies'] as const;
 type Section = (typeof SECTIONS)[number];
 type Manifest = Record<string, unknown> & Partial<Record<Section, Record<string, string>>>;
@@ -51,63 +53,116 @@ interface NodeAdapterSpec {
   transitive: TransitiveStrategy;
 }
 
+/** Workspace globs from package.json `workspaces` (npm, Yarn) or pnpm-workspace.yaml `packages`. */
+export function workspacePatterns(snap: Snapshot): string[] {
+  const man = parse(snap[MANIFEST]);
+  const ws = man?.workspaces as string[] | { packages?: string[] } | undefined;
+  const fromManifest = Array.isArray(ws) ? ws : (ws?.packages ?? []);
+  const yaml = snap[PNPM_WORKSPACE] ?? '';
+  const block = /^packages:\s*\n((?:[ \t]+-.*\n?|[ \t]*#.*\n?|[ \t]*\n)*)/m.exec(yaml)?.[1] ?? '';
+  const fromPnpm = [...block.matchAll(/^[ \t]+-[ \t]*['"]?([^'"\n#]+?)['"]?[ \t]*(?:#.*)?$/gm)].map((m) => m[1]!);
+  return [...fromManifest, ...fromPnpm];
+}
+
+/** package.json files in a snapshot: the root one first, then workspace members. */
+const manifestsOf = (...snaps: Snapshot[]) => {
+  const keys = new Set(snaps.flatMap((s) => Object.keys(s).filter((k) => (k === MANIFEST || k.endsWith(`/${MANIFEST}`)) && s[k] != null)));
+  return [...keys].sort((a, b) => (a === MANIFEST ? -1 : b === MANIFEST ? 1 : a.localeCompare(b)));
+};
+
+/** The lockfile "importer" of a manifest: its directory relative to the root, '' for the root. */
+const importerOf = (manifest: string) => (manifest === MANIFEST ? '' : posix.dirname(manifest));
+
 function nodeAdapter({ name, lockfile, reader, install, transitive }: NodeAdapterSpec): Adapter {
-  const resolved = (snap: Snapshot, dep: string, spec: string | undefined) => {
+  const resolved = (snap: Snapshot, dep: string, spec: string | undefined, manifest = MANIFEST) => {
     const text = snap[lockfile];
-    return text && spec !== undefined ? reader.direct(text, dep, spec) : undefined;
+    return text && spec !== undefined ? reader.direct(text, dep, spec, importerOf(manifest)) : undefined;
   };
 
-  /** Base package.json with head's declarations for the direct updates in `subset`. */
-  const buildManifest = (base: Snapshot, head: Snapshot, subset: Update[], pin: boolean): Manifest => {
-    const baseText = base[MANIFEST];
-    if (!baseText) throw new Error(`${MANIFEST} does not exist at the base ref`);
+  /**
+   * One manifest from base, with head's declarations for the direct updates
+   * in `subset`. Members that only exist in head are taken from head as-is.
+   */
+  const buildManifest = (manifest: string, base: Snapshot, head: Snapshot, subset: Update[], pin: boolean): Manifest | null => {
+    const baseText = base[manifest];
+    if (!baseText) return parse(head[manifest]);
     const man = parse(baseText)!;
-    const hm = parse(head[MANIFEST]);
+    const hm = parse(head[manifest]);
     for (const u of subset.filter((x) => x.kind === 'direct')) {
       const b = sectionOf(man, u.name);
       const h = sectionOf(hm, u.name);
+      if (!b && !h) continue;
       if (b) delete man[b.section]![u.name];
       if (!h) continue; // removed in head
       // Pin the exact version the head lockfile resolved, so the package
       // manager installs that version and not whatever is newest today.
-      const hv = resolved(head, u.name, h.spec);
+      const hv = resolved(head, u.name, h.spec, manifest);
       const spec = pin && hv && isRegistryRange(h.spec) ? hv : h.spec;
       man[h.section] = { ...(man[h.section] ?? {}), [u.name]: spec };
     }
     return man;
   };
 
+  const writeManifests = async (dir: string, base: Snapshot, head: Snapshot, subset: Update[], pin: boolean) => {
+    const out = new Map<string, Manifest>();
+    for (const m of manifestsOf(base, head)) {
+      if (head[m] == null) continue; // a member removed in head is gone from the worktree too
+      const man = buildManifest(m, base, head, subset, pin);
+      if (man) out.set(m, man);
+    }
+    return out;
+  };
+
+  const save = async (dir: string, base: Snapshot, head: Snapshot, mans: Map<string, Manifest>) => {
+    for (const [m, man] of mans) {
+      await mkdir(join(dir, posix.dirname(m)), { recursive: true });
+      await writeFile(join(dir, m), JSON.stringify(man, null, detectIndent(base[m] ?? head[m]!)) + '\n');
+    }
+  };
+
   return {
     name,
-    files: [MANIFEST, lockfile],
+    files: name === 'pnpm' ? [MANIFEST, lockfile, PNPM_WORKSPACE] : [MANIFEST, lockfile],
     installCommand: install,
 
     detect(head) {
       return head[MANIFEST] != null && head[lockfile] != null;
     },
 
+    members(snap, paths) {
+      const patterns = workspacePatterns(snap);
+      return patterns.length ? matchMembers(patterns, paths, MANIFEST) : [];
+    },
+
     diff(base, head) {
-      const bm = parse(base[MANIFEST]);
-      const hm = parse(head[MANIFEST]);
+      const manifests = manifestsOf(base, head);
       const updates: Update[] = [];
       const excluded: string[] = [];
-      const direct = directNames(bm, hm);
+      const direct = directNames(...manifests.flatMap((m) => [parse(base[m]), parse(head[m])]));
+      // Workspace packages themselves show up in lockfiles but are not dependencies.
+      const workspacePackages = new Set(
+        manifests.filter((m) => m !== MANIFEST).flatMap((m) => [parse(base[m])?.name, parse(head[m])?.name]).filter((n): n is string => typeof n === 'string'),
+      );
 
       for (const dep of direct) {
-        const b = sectionOf(bm, dep);
-        const h = sectionOf(hm, dep);
-        const bv = resolved(base, dep, b?.spec);
-        const hv = resolved(head, dep, h?.spec);
-        const specChanged = b?.spec !== h?.spec || b?.section !== h?.section;
-        if (!specChanged && bv === hv) continue;
-        updates.push({
-          id: dep,
-          name: dep,
-          section: (h ?? b)!.section,
-          from: b ? (bv ?? b.spec) : null,
-          to: h ? (hv ?? h.spec) : null,
-          kind: 'direct',
-        });
+        if (workspacePackages.has(dep)) continue;
+        let changed = false;
+        let section: string | undefined;
+        const from = new Set<string>();
+        const to = new Set<string>();
+        for (const m of manifests) {
+          const b = sectionOf(parse(base[m]), dep);
+          const h = sectionOf(parse(head[m]), dep);
+          if (!b && !h) continue;
+          const bv = resolved(base, dep, b?.spec, m);
+          const hv = resolved(head, dep, h?.spec, m);
+          if (b?.spec !== h?.spec || b?.section !== h?.section || bv !== hv) changed = true;
+          if (b) from.add(bv ?? b.spec);
+          if (h) to.add(hv ?? h.spec);
+          section ??= (h ?? b)!.section;
+        }
+        if (!changed) continue;
+        updates.push({ id: dep, name: dep, section: section!, from: showVersions(from), to: showVersions(to), kind: 'direct' });
       }
 
       // Transitive packages whose resolved versions changed. Packages that
@@ -117,11 +172,11 @@ function nodeAdapter({ name, lockfile, reader, install, transitive }: NodeAdapte
       if (bl && hl) {
         const b = reader.all(bl);
         const h = reader.all(hl);
-        const directSet = new Set(direct);
+        const skip = new Set([...direct, ...workspacePackages]);
         for (const pkg of [...new Set([...b.keys(), ...h.keys()])].sort()) {
           const bv = b.get(pkg);
           const hv = h.get(pkg);
-          if (directSet.has(pkg) || !bv || !hv || sameSet(bv, hv)) continue;
+          if (skip.has(pkg) || !bv || !hv || sameSet(bv, hv)) continue;
           const u: Update = { id: pkg, name: pkg, section: 'lockfile', from: showVersions(bv), to: showVersions(hv), kind: 'transitive' };
           if (transitive.supports(bv, hv)) updates.push(u);
           else excluded.push(`${pkg} ${u.from} → ${u.to} (several versions installed side by side)`);
@@ -131,11 +186,12 @@ function nodeAdapter({ name, lockfile, reader, install, transitive }: NodeAdapte
     },
 
     async write(dir, base, head, subset) {
-      const man = buildManifest(base, head, subset, true);
+      if (!base[MANIFEST]) throw new Error(`${MANIFEST} does not exist at the base ref`);
+      const mans = await writeManifests(dir, base, head, subset, true);
       const trans = subset.filter((x) => x.kind === 'transitive');
       let lock = base[lockfile] ?? null;
-      if (trans.length) ({ lock } = transitive.apply({ man, lock, headLock: head[lockfile] ?? '', subset: trans }));
-      await writeFile(join(dir, MANIFEST), JSON.stringify(man, null, detectIndent(base[MANIFEST]!)) + '\n');
+      if (trans.length) ({ lock } = transitive.apply({ man: mans.get(MANIFEST)!, lock, headLock: head[lockfile] ?? '', subset: trans }));
+      await save(dir, base, head, mans);
       if (lock != null) await writeFile(join(dir, lockfile), lock);
       return [];
     },
@@ -144,8 +200,7 @@ function nodeAdapter({ name, lockfile, reader, install, transitive }: NodeAdapte
     // specs (no exact pins, no temporary overrides) so the result reads like
     // the original PR.
     async finalize(dir, base, head, subset) {
-      const man = buildManifest(base, head, subset, false);
-      await writeFile(join(dir, MANIFEST), JSON.stringify(man, null, detectIndent(base[MANIFEST]!)) + '\n');
+      await save(dir, base, head, await writeManifests(dir, base, head, subset, false));
       return [];
     },
   };
