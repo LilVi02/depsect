@@ -5,8 +5,11 @@
 // of YAML, and Yarn v1 has its own simple format.
 
 export interface LockReader {
-  /** Resolved version of a direct dependency declared as `name: spec`. */
-  direct(text: string, name: string, spec: string): string | undefined;
+  /**
+   * Resolved version of a direct dependency declared as `name: spec` by the
+   * workspace member at `importer` (a path relative to the lockfile; '' for the root).
+   */
+  direct(text: string, name: string, spec: string, importer?: string): string | undefined;
   /** Every package in the lockfile: name → set of resolved versions. */
   all(text: string): Map<string, Set<string>>;
 }
@@ -68,8 +71,10 @@ interface NpmLock {
 }
 
 export const npmLock: LockReader = {
-  direct(text, name) {
-    return (JSON.parse(text) as NpmLock).packages?.[`node_modules/${name}`]?.version;
+  direct(text, name, _spec, importer = '') {
+    const pkgs = (JSON.parse(text) as NpmLock).packages ?? {};
+    // A workspace member's copy is nested under it unless it was hoisted to the root.
+    return (importer && pkgs[`${importer}/node_modules/${name}`]?.version) || pkgs[`node_modules/${name}`]?.version;
   },
   all(text) {
     const out = new Map<string, Set<string>>();
@@ -88,9 +93,9 @@ export const npmLock: LockReader = {
 const stripPeers = (v: string) => v.replace(/\(.*$/, '');
 
 export const pnpmLock: LockReader = {
-  direct(text, name) {
+  direct(text, name, _spec, importerPath = '') {
     const tree = parseYamlish(text);
-    const importer = sub(sub(tree, 'importers'), '.') ?? tree;
+    const importer = sub(sub(tree, 'importers'), importerPath || '.') ?? tree;
     for (const s of DEP_SECTIONS) {
       const entry = sub(importer, s)?.[name];
       if (typeof entry === 'string') return stripPeers(entry);

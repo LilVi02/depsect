@@ -13,6 +13,8 @@ export interface Update {
   to: string | null;
   /** Direct dependencies are declared in the manifest; transitive ones only appear in the lockfile. */
   kind: 'direct' | 'transitive';
+  /** Project directory relative to where depsect runs ('' for the root). Set by the runner. */
+  project?: string;
 }
 
 export interface Diff {
@@ -25,6 +27,12 @@ export interface Adapter {
   name: string;
   /** Files (relative to the project dir) this adapter reads and rewrites. */
   files: string[];
+  /**
+   * Optional: workspace member manifests to read and rewrite as well, e.g.
+   * "packages/a/package.json". `paths` lists every file of the project at
+   * that ref, relative to the project dir.
+   */
+  members?(snap: Snapshot, paths: string[]): string[];
   detect(head: Snapshot): boolean;
   diff(base: Snapshot, head: Snapshot): Diff;
   /**

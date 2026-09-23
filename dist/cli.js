@@ -11,7 +11,9 @@ Options:
   -t, --test <cmd>      Command that must pass (e.g. "npm test"). Required.
   -b, --base <ref>      Ref with the old dependencies (default: HEAD~1)
   -H, --head <ref>      Ref with the new dependencies (default: HEAD)
-  -d, --dir <path>      Project directory relative to the repo root (default: .)
+  -d, --dir <path>      Directory to run in, relative to the repo root (default: .).
+                        Every project changed below it is found automatically,
+                        including workspace members; the test command runs here.
   -i, --install <cmd>   Install command (default depends on the package manager)
   -r, --retries <n>     Re-run a failing test n times before trusting it (default: 0)
       --transitive <m>  Bisect lockfile-only (transitive) changes: auto, always, never

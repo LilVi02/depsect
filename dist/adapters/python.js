@@ -107,7 +107,7 @@ function pythonAdapter(spec) {
     return {
         name: spec.name,
         files: [PYPROJECT, spec.lockfile],
-        installCommand: () => spec.install,
+        installCommand: spec.install,
         detect(head) {
             return head[PYPROJECT] != null && head[spec.lockfile] != null;
         },
@@ -156,7 +156,8 @@ export const uv = pythonAdapter({
     name: 'uv',
     lockfile: 'uv.lock',
     flavor: 'uv',
-    install: 'uv sync --frozen',
+    // A workspace lists its members under [manifest]; install all of them.
+    install: (head) => (/^\[manifest\][^[]*\bmembers\s*=/m.test(head['uv.lock'] ?? '') ? 'uv sync --frozen --all-packages' : 'uv sync --frozen'),
     direct(_pyproject, lock) {
         // uv records the project's direct dependencies on its own lock entry.
         const out = new Map();
@@ -178,7 +179,7 @@ export const poetry = pythonAdapter({
     name: 'poetry',
     lockfile: 'poetry.lock',
     flavor: 'poetry',
-    install: 'poetry sync --no-interaction',
+    install: () => 'poetry sync --no-interaction',
     direct(pyproject) {
         const out = new Map();
         const project = table(pyproject.project);

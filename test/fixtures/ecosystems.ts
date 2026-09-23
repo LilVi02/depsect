@@ -33,9 +33,9 @@ export interface Ecosystem {
   make(scenario: Scenario): Promise<Fixture>;
 }
 
-const sh = (cmd: string, cwd: string, env: Record<string, string> = {}) => shOk(cmd, { cwd, env });
-const tmp = (prefix: string) => mkdtemp(join(tmpdir(), `depsect-${prefix}-`));
-const underscore = (n: string) => n.replace(/-/g, '_');
+export const sh = (cmd: string, cwd: string, env: Record<string, string> = {}) => shOk(cmd, { cwd, env });
+export const tmp = (prefix: string) => mkdtemp(join(tmpdir(), `depsect-${prefix}-`));
+export const underscore = (n: string) => n.replace(/-/g, '_');
 
 // --- JavaScript ---------------------------------------------------------------
 
@@ -50,7 +50,7 @@ if (versions.zeta === '1.1.0') fail('ds-zeta 1.1.0 is broken');
 console.log(JSON.stringify(versions));
 `;
 
-async function publishNpm(registry: string, work: string, url: string, pkgs: Pkg[]) {
+export async function publishNpm(registry: string, work: string, url: string, pkgs: Pkg[]) {
   const byName = new Map<string, Pkg[]>();
   for (const p of pkgs) byName.set(p.name, [...(byName.get(p.name) ?? []), p]);
   for (const [name, versions] of byName) {
@@ -182,7 +182,7 @@ function wheel(p: Pkg): Buffer {
   return zip(files);
 }
 
-async function publishPypi(index: string, pkgs: Pkg[]) {
+export async function publishPypi(index: string, pkgs: Pkg[]) {
   await mkdir(join(index, 'files'), { recursive: true });
   const byName = new Map<string, Pkg[]>();
   for (const p of pkgs) byName.set(p.name, [...(byName.get(p.name) ?? []), p]);
@@ -200,7 +200,7 @@ async function publishPypi(index: string, pkgs: Pkg[]) {
   await writeFile(join(index, 'simple', 'index.html'), `<!DOCTYPE html><html><body>${[...byName.keys()].map((n) => `<a href="${n}/">${n}</a>`).join('')}</body></html>`);
 }
 
-const PY_TEST = `
+export const PY_TEST = `
 import json, sys
 import ds_alpha, ds_beta, ds_gamma, ds_delta, ds_epsilon
 v = dict(alpha=ds_alpha.VERSION, beta=ds_beta.VERSION, gamma=ds_gamma.VERSION, delta=ds_delta.VERSION, zeta=ds_epsilon.ZETA, eta=ds_epsilon.ETA)
@@ -276,7 +276,7 @@ function pythonEcosystem(id: 'uv' | 'poetry'): Ecosystem {
 
 // --- Cargo ----------------------------------------------------------------------
 
-async function publishCrates(vendor: string, pkgs: Pkg[]) {
+export async function publishCrates(vendor: string, pkgs: Pkg[]) {
   for (const p of pkgs) {
     const dir = join(vendor, `${p.name}-${p.version}`);
     await mkdir(join(dir, 'src'), { recursive: true });
@@ -348,9 +348,9 @@ const cargoEcosystem: Ecosystem = {
 
 // --- Go -------------------------------------------------------------------------
 
-const goPath = (name: string) => `example.com/ds/${name.slice(3)}`;
+export const goPath = (name: string) => `example.com/ds/${name.slice(3)}`;
 
-async function publishGo(proxy: string, pkgs: Pkg[]) {
+export async function publishGo(proxy: string, pkgs: Pkg[]) {
   const byName = new Map<string, Pkg[]>();
   for (const p of pkgs) byName.set(p.name, [...(byName.get(p.name) ?? []), p]);
   for (const [name, versions] of byName) {
@@ -373,7 +373,7 @@ async function publishGo(proxy: string, pkgs: Pkg[]) {
   }
 }
 
-const GO_TEST = `package fixture
+export const GO_TEST = `package fixture
 
 import (
 	"encoding/json"

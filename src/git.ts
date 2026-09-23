@@ -37,3 +37,17 @@ export async function addWorktree(cwd: string, ref: string): Promise<Worktree> {
     },
   };
 }
+
+/** Files (paths relative to `dir`) at `ref`, below the repo-relative directory `dir`. */
+export async function listFiles(cwd: string, ref: string, dir: string): Promise<string[]> {
+  const out = await shOk(`git -c core.quotePath=false ls-tree -r --name-only ${q(ref)} -- ${q(dir === '.' ? '.' : `${dir}/`)}`, { cwd });
+  const prefix = dir === '.' ? '' : `${dir}/`;
+  return out.split('\n').filter(Boolean).map((p) => p.slice(prefix.length));
+}
+
+/** Files changed between two refs (paths relative to `dir`), below the repo-relative directory `dir`. */
+export async function changedFiles(cwd: string, base: string, head: string, dir: string): Promise<string[]> {
+  const out = await shOk(`git -c core.quotePath=false diff --name-only ${q(base)} ${q(head)} -- ${q(dir === '.' ? '.' : `${dir}/`)}`, { cwd });
+  const prefix = dir === '.' ? '' : `${dir}/`;
+  return out.split('\n').filter(Boolean).map((p) => p.slice(prefix.length));
+}

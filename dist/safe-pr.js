@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import { sh } from "./exec.js";
 import { addWorktree } from "./git.js";
 const q = (s) => `'${s.replace(/'/g, `'\\''`)}'`;
-const row = (u) => `| \`${u.name}\` | ${u.from ?? '_(new)_'} | ${u.to ?? '_(removed)_'} |`;
+const row = (u) => `| \`${u.name}\`${u.project ? ` <sub>${u.project}</sub>` : ''} | ${u.from ?? '_(new)_'} | ${u.to ?? '_(removed)_'} |`;
 const tableOf = (us) => ['| Package | From | To |', '| --- | --- | --- |', ...us.map(row)].join('\n');
 export function safePrTitle(r, pr) {
     const n = r.result.safe.length;
