@@ -82,7 +82,8 @@ export interface Project {
 }
 
 /** Files that can signal a dependency change, including workspace member manifests. */
-const DEPENDENCY_FILES = new Set([...adapters.flatMap((a) => a.files), 'package.json', 'Cargo.toml', 'pyproject.toml', 'go.mod']);
+const DEPENDENCY_FILES = new Set([...adapters.flatMap((a) => a.files), 'package.json', 'Cargo.toml', 'pyproject.toml', 'go.mod', 'pom.xml', 'build.gradle', 'build.gradle.kts']);
+const isDependencyFile = (p: string) => DEPENDENCY_FILES.has(posix.basename(p)) || /(^|\/)gradle\/[^/]+\.versions\.toml$/.test(p);
 
 /**
  * Find the projects a change touches: for every changed dependency file,
@@ -93,22 +94,43 @@ const DEPENDENCY_FILES = new Set([...adapters.flatMap((a) => a.files), 'package.
 export async function discoverProjects(root: string, base: string, head: string, runDir: string): Promise<Project[]> {
   const allFiles = [...new Set(adapters.flatMap((a) => a.files))];
   const repoPath = (d: string) => posix.join(runDir, d || '.');
-  const changed = (await changedFiles(root, base, head, runDir)).filter((p) => DEPENDENCY_FILES.has(posix.basename(p)));
-  const candidates = [...new Set(changed.map((p) => posix.dirname(p)).map((d) => (d === '.' ? '' : d)))];
+  const changed = (await changedFiles(root, base, head, runDir)).filter(isDependencyFile);
+  // A version catalog lives in <project>/gradle/.
+  const dirOf = (p: string) => posix.dirname(/(^|\/)gradle\/[^/]+\.versions\.toml$/.test(p) ? posix.dirname(p) : p);
+  const candidates = [...new Set(changed.map(dirOf).map((d) => (d === '.' ? '' : d)))];
+
+  const parent = (d: string): string | null => (d === '' ? null : posix.dirname(d) === '.' ? '' : posix.dirname(d));
+  const detectAt = new Map<string, Adapter | null>();
+  const detect = async (d: string) => {
+    if (!detectAt.has(d)) {
+      const snap = await snapshot(root, head, repoPath(d), allFiles);
+      detectAt.set(d, adapters.find((a) => a.detect(snap)) ?? null);
+    }
+    return detectAt.get(d)!;
+  };
+
+  // The nearest ancestor project that lists `d` as one of its members
+  // (a Maven module, a Gradle subproject, a workspace member with its own
+  // lockfile), if any.
+  const container = async (d: string): Promise<string | null> => {
+    for (let a = parent(d); a !== null; a = parent(a)) {
+      const adapter = await detect(a);
+      if (!adapter?.members) continue;
+      const rel = a === '' ? d : d.slice(a.length + 1);
+      const members = adapter.members(await snapshot(root, head, repoPath(a), adapter.files), await listFiles(root, head, repoPath(a)));
+      if (members.some((m) => posix.dirname(m) === rel)) return a;
+    }
+    return null;
+  };
 
   const found = new Map<string, Adapter>();
-  const detectAt = new Map<string, Adapter | null>();
   for (const start of candidates) {
-    for (let d: string | null = start; d !== null; d = d === '' ? null : posix.dirname(d) === '.' ? '' : posix.dirname(d)) {
-      if (!detectAt.has(d)) {
-        const snap = await snapshot(root, head, repoPath(d), allFiles);
-        detectAt.set(d, adapters.find((a) => a.detect(snap)) ?? null);
-      }
-      const adapter = detectAt.get(d);
-      if (adapter) {
-        found.set(d, adapter);
-        break;
-      }
+    for (let d: string | null = start; d !== null; d = parent(d)) {
+      if (!(await detect(d))) continue;
+      let top = d;
+      for (let c = await container(top); c !== null; c = await container(top)) top = c;
+      found.set(top, (await detect(top))!);
+      break;
     }
   }
 

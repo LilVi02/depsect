@@ -28,6 +28,8 @@ export interface Fixture {
 
 export interface Ecosystem {
   id: string;
+  /** Scenarios that apply (default: both). Build tools without a lockfile have no lockfile refresh. */
+  scenarios?: Scenario[];
   /** Reason to skip, or false when the tools are available. */
   skip(): Promise<string | false>;
   make(scenario: Scenario): Promise<Fixture>;

@@ -1,6 +1,6 @@
 {
   "name": "depsect",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "git bisect for grouped dependency updates: find which bump in a Dependabot/Renovate PR broke your build.",
   "type": "module",
   "bin": {
@@ -26,7 +26,11 @@
     "lockfile",
     "ci",
     "github-action",
-    "delta-debugging"
+    "delta-debugging",
+    "composer",
+    "bundler",
+    "maven",
+    "gradle"
   ],
   "repository": {
     "type": "git",

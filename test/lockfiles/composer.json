@@ -1,0 +1,11 @@
+{
+    "name": "lf/app",
+    "require": {
+        "php": ">=8.1",
+        "psr/log": "^3.0",
+        "monolog/monolog": "^3.5"
+    },
+    "require-dev": {
+        "symfony/polyfill-mbstring": "^1.28"
+    }
+}

@@ -5,7 +5,7 @@
 **`git bisect` for grouped dependency updates.**
 Dependabot bumped 23 packages in one PR and CI is red. Which one broke it? `depsect` tells you, and hands you the other 22 already verified green.
 
-Works with **npm, pnpm, Yarn, uv, Poetry, Cargo and Go modules**.
+Works with **npm, pnpm, Yarn, uv, Poetry, Cargo, Go modules, Composer, Bundler, Maven and Gradle**.
 
 <p align="center">
   <img src="docs/demo.svg" alt="depsect bisecting a grouped update of 7 real npm packages: chalk and date-fns are the culprits, the other 5 are verified safe" width="760">
@@ -93,6 +93,7 @@ npx depsect --test "npm test"                        # compares HEAD~1 → HEAD
 npx depsect --base origin/main --test "cargo test"
 npx depsect --test "uv run pytest" --transitive always
 npx depsect --test "go test ./..." --apply-safe      # keep only the safe bumps
+npx depsect --test "./gradlew test"                  # Maven/Gradle: versions in pom.xml, catalogs, build scripts
 ```
 
 depsect works in a throwaway `git worktree`, so your checkout stays untouched (unless you pass `--apply-safe`). Run `depsect --help` for all options. Exit codes: `0` no culprit, `1` culprit found, `2` base already broken, `3` error.
@@ -110,8 +111,12 @@ The package manager is picked from the lockfile. Each one applies a subset of up
 | **Poetry** | `poetry.lock` | same | same | `poetry sync` |
 | **Cargo** | `Cargo.lock` | `cargo update -p name@old --precise new`, plus head's declaration in `Cargo.toml` | same | `cargo fetch` |
 | **Go** | `go.mod` | `go get module@version` on top of the base `go.mod` | `// indirect` requirements, same way | `go mod download` |
+| **Composer** | `composer.lock` | the lockfile is composed package by package; `composer.json` gets base constraints back for the rest, and the `content-hash` is recomputed | same | `composer install` |
+| **Bundler** | `Gemfile.lock` | head's lockfile with every other gem put back to base: all its platform builds, `DEPENDENCIES`, `CHECKSUMS`, and its `gem` line in the Gemfile | same | `bundle install` |
+| **Maven** | `pom.xml` | head's poms with every other version put back to base, inline (`<version>`) or in `<properties>`; modules included | no lockfile | none (the build resolves) |
+| **Gradle** | `build.gradle(.kts)`, `settings.gradle(.kts)` | same for version catalogs (`gradle/*.versions.toml`), `"group:artifact:version"` strings and plugin versions; subprojects included | no lockfile | none (the build resolves) |
 
-Python environments hold one version of each package, so for uv and Poetry the composed lockfile is exactly "base, with these packages from head" (plus any new packages they need), installed as-is.
+Python environments, PHP projects and Ruby bundles hold one version of each package, so for uv, Poetry, Composer and Bundler the dependency state is exactly "base, with these packages from head" (plus any new packages they need), installed as-is. Maven and Gradle have no lockfile, so depsect bisects the versions the build files declare; the build resolves the rest.
 
 ## Monorepos
 
@@ -142,13 +147,14 @@ The test command runs from the working directory, so give it one that covers eve
 - [x] Open a PR with the safe updates from the Action
 - [ ] Run independent subsets in parallel
 - [x] Workspaces and monorepos with several lockfiles in one PR
-- [ ] Bundler, Composer, Maven/Gradle
+- [x] Bundler, Composer, Maven/Gradle
 
 Known limitations:
 
 - For npm, pnpm and Yarn, applying a direct update lets the package manager re-resolve that package's own subtree, which can differ slightly from the bot's lockfile. This almost never changes the verdict.
 - pnpm and Yarn cannot force a transitive package that is installed at several versions side by side; such changes are listed in the report as not isolated.
 - `install-command`, when set, is used for every project in the run.
+- Maven and Gradle: an imported BOM is one update, so the artifacts it manages move together with it. Version ranges and versions computed in build logic are not bisected, and Gradle dependency locking (`gradle.lockfile`) is not read yet.
 
 ## Development
 
@@ -158,7 +164,7 @@ npm test        # unit tests + offline end-to-end tests against real package man
 npm run build   # compiles to dist/ (committed, used by the Action)
 ```
 
-The end-to-end tests build throwaway repos with a local npm registry, a local PyPI index, a Cargo directory source and a file-based Go proxy, so they run offline. Each ecosystem's tests run when its tools are on `PATH` (Yarn Berry also needs `DEPSECT_TEST_BERRY_PATH`); `DEPSECT_E2E=npm,cargo` runs a subset.
+The end-to-end tests build throwaway repos with a local npm registry, a local PyPI index, a Cargo directory source, a file-based Go proxy, a Composer artifact repository, a RubyGems compact index and a file-based Maven repository. Everything runs offline except Maven's and Gradle's build plugins and JUnit, which come from Maven Central. Each ecosystem's tests run when its tools are on `PATH` (Yarn Berry also needs `DEPSECT_TEST_BERRY_PATH`); `DEPSECT_E2E=npm,cargo` runs a subset.
 
 ## License
 

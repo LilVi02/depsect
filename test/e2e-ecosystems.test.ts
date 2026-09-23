@@ -7,6 +7,7 @@ import { test } from 'node:test';
 import { sh } from '../src/exec.ts';
 import { run } from '../src/runner.ts';
 import { ecosystems, type Scenario } from './fixtures/ecosystems.ts';
+import { more } from './fixtures/more.ts';
 
 const only = process.env.DEPSECT_E2E?.split(',');
 
@@ -30,8 +31,8 @@ const versionsLine = (out: string) => {
   return line ? (JSON.parse(line) as Record<string, string>) : null;
 };
 
-for (const eco of ecosystems) {
-  for (const scenario of ['grouped', 'refresh'] as const) {
+for (const eco of [...ecosystems, ...more]) {
+  for (const scenario of eco.scenarios ?? (['grouped', 'refresh'] as const)) {
     const skip = only && !only.includes(eco.id) ? 'not selected in DEPSECT_E2E' : await eco.skip();
     test(`${eco.id}: ${scenario}`, { skip, timeout: 600_000 }, async () => {
       const fx = await eco.make(scenario);
