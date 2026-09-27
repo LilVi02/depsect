@@ -113,6 +113,7 @@ export function composeFlatLock(base: FlatLock, head: FlatLock, names: Set<strin
 
 interface PythonSpec {
   name: string;
+  serialInstall?: boolean;
   lockfile: string;
   flavor: 'uv' | 'poetry';
   install: (head: Snapshot) => string;
@@ -131,6 +132,7 @@ function pythonAdapter(spec: PythonSpec): Adapter {
 
   return {
     name: spec.name,
+    serialInstall: spec.serialInstall,
     files: [PYPROJECT, spec.lockfile],
     installCommand: spec.install,
 
@@ -203,6 +205,8 @@ export const uv = pythonAdapter({
 
 export const poetry = pythonAdapter({
   name: 'poetry',
+  // Poetry's artifact cache is not safe for concurrent installs.
+  serialInstall: true,
   lockfile: 'poetry.lock',
   flavor: 'poetry',
   install: () => 'poetry sync --no-interaction',

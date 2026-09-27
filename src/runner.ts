@@ -4,7 +4,7 @@ import { adapters } from './adapters/index.ts';
 import type { Adapter, Snapshot, Update } from './adapters/types.ts';
 import { BaseBrokenError, findCulprits, NoFailureError, type BisectResult, type Outcome } from './bisect.ts';
 import { sh } from './exec.ts';
-import { addWorktree, changedFiles, listFiles, readAt, repoRoot, resolveRef } from './git.ts';
+import { addWorktree, changedFiles, listFiles, readAt, repoRoot, resolveRef, type Worktree } from './git.ts';
 
 /**
  * Which transitive (lockfile-only) packages to bisect.
@@ -26,6 +26,8 @@ export interface RunOptions {
   retries: number;
   timeoutMs?: number;
   transitive?: TransitiveMode;
+  /** How many subsets to test at the same time, each in its own worktree (default 1). */
+  jobs?: number;
   /** If set, write the verified-safe dependency files into the working tree. */
   applySafe: boolean;
   log: (msg: string) => void;
@@ -50,6 +52,8 @@ export interface RunReport {
   excluded: string[];
   notes: string[];
   durationMs: number;
+  /** Subsets tested at the same time. */
+  jobs: number;
   appliedSafe: boolean;
   /** Dependency files (relative to the run directory) with only the safe updates applied. */
   safeFiles?: Record<string, string>;
@@ -200,7 +204,8 @@ export async function run(opts: RunOptions): Promise<RunReport> {
     status: 'no-updates',
     adapter: [...new Set(projects.map((p) => p.adapter.name))].join(' + ') || 'none',
     projects: projects.map((p) => ({ dir: label(p), adapter: p.adapter.name })),
-    base, head, updates, culpritLogs: [], excluded, notes, durationMs: 0, appliedSafe: false,
+    base, head, updates, culpritLogs: [], excluded, notes, durationMs: 0, jobs: Math.max(1, Math.floor(opts.jobs ?? 1)),
+    appliedSafe: false,
   };
   if (updates.length === 0) {
     report.durationMs = Date.now() - started;
@@ -217,65 +222,124 @@ export async function run(opts: RunOptions): Promise<RunReport> {
   }
 
   // Run against the head code so the only thing that varies is dependencies.
-  const wt = await addWorktree(root, head);
-  const runDir = join(wt.path, dir);
-  const projectDir = (p: Project) => join(runDir, p.dir);
+  // Each "lane" is its own worktree with its own installs; with --jobs N,
+  // up to N lanes test subsets at the same time.
+  interface Lane {
+    wt: Worktree;
+    runDir: string;
+    /** What each project currently has installed, so unchanged projects are not reinstalled. */
+    applied: Map<Project, string>;
+  }
+  const jobs = Math.max(1, Math.floor(opts.jobs ?? 1));
+  const lanes: Lane[] = [];
+  const idle: Lane[] = [];
+  const waiting: ((lane: Lane) => void)[] = [];
+  let creating: Promise<unknown> = Promise.resolve();
+  let pending = 0;
+  const wtPaths: string[] = [];
+
+  const newLane = async (): Promise<Lane> => {
+    // One `git worktree add` at a time: concurrent ones can collide on git's locks.
+    const made = creating.then(async () => {
+      const wt = await addWorktree(root, head);
+      wtPaths.push(wt.path, await realpath(wt.path));
+      const lane: Lane = { wt, runDir: join(wt.path, dir), applied: new Map() };
+      lanes.push(lane);
+      return lane;
+    });
+    creating = made.catch(() => {});
+    return made;
+  };
+  const acquire = async (): Promise<Lane> => {
+    const free = idle.pop();
+    if (free) return free;
+    if (lanes.length + pending < jobs) {
+      pending++;
+      try {
+        return await newLane();
+      } finally {
+        pending--;
+      }
+    }
+    return new Promise((resolve) => waiting.push(resolve));
+  };
+  const release = (lane: Lane) => {
+    const next = waiting.shift();
+    if (next) next(lane);
+    else idle.push(lane);
+  };
+
+  const projectDir = (lane: Lane, p: Project) => join(lane.runDir, p.dir);
   const install = (p: Project) => opts.install ?? p.adapter.installCommand(p.head);
   // The test command sees every project's environment (e.g. GOFLAGS).
   const testEnv = Object.assign({}, ...projects.map((p) => p.adapter.env ?? {})) as Record<string, string>;
   const logs = new Map<string, string>();
   const keyOf = (subset: Update[]) => subset.map((u) => u.id).join('\0');
-  // Show paths relative to the run directory instead of the throwaway worktree.
-  const wtPaths = [...new Set([wt.path, await realpath(wt.path)])];
+  // Show paths relative to the run directory instead of the throwaway worktrees.
   const clean = (s: string) => wtPaths.reduce((acc, p) => acc.split(`${p}/`).join('').split(p).join('.'), s);
 
-  // What each project currently has installed, so unchanged projects are not reinstalled.
-  const applied = new Map<Project, string>();
-
-  const run = async (p: Project, commands: string[]) => {
-    let output = '';
-    for (const cmd of [...commands, install(p)]) {
-      const res = await sh(cmd, { cwd: projectDir(p), timeoutMs: opts.timeoutMs, env: p.adapter.env });
-      output += `$ ${multi ? `(${label(p)}) ` : ''}${cmd}\n${res.output}`;
-      if (res.code !== 0) return { ok: false, output };
-    }
-    return { ok: true, output };
+  // Package managers whose shared cache is not safe for concurrent installs
+  // install one lane at a time; tests still run in parallel.
+  const installLocks = new Map<string, Promise<unknown>>();
+  const exclusive = async <R>(p: Project, fn: () => Promise<R>): Promise<R> => {
+    if (jobs === 1 || !p.adapter.serialInstall) return fn();
+    const prev = installLocks.get(p.adapter.name) ?? Promise.resolve();
+    const next = prev.then(fn, fn);
+    installLocks.set(p.adapter.name, next.catch(() => {}));
+    return next;
   };
 
-  const apply = async (subset: Update[]): Promise<{ ok: boolean; output: string }> => {
+  const run = (lane: Lane, p: Project, commands: string[]) =>
+    exclusive(p, async () => {
+      let output = '';
+      for (const cmd of [...commands, install(p)]) {
+        const res = await sh(cmd, { cwd: projectDir(lane, p), timeoutMs: opts.timeoutMs, env: p.adapter.env });
+        output += `$ ${multi ? `(${label(p)}) ` : ''}${cmd}\n${res.output}`;
+        if (res.code !== 0) return { ok: false, output };
+      }
+      return { ok: true, output };
+    });
+
+  const apply = async (lane: Lane, subset: Update[]): Promise<{ ok: boolean; output: string }> => {
     let output = '';
     for (const p of projects) {
       const mine = subset.filter((u) => u.project === p.dir);
       const key = keyOf(mine);
-      if (applied.get(p) === key) continue;
-      applied.delete(p);
-      const res = await run(p, await p.adapter.write(projectDir(p), p.base, p.head, mine));
+      if (lane.applied.get(p) === key) continue;
+      lane.applied.delete(p);
+      const res = await run(lane, p, await p.adapter.write(projectDir(lane, p), p.base, p.head, mine));
       output += res.output;
       if (!res.ok) return { ok: false, output };
-      applied.set(p, key);
+      lane.applied.set(p, key);
     }
     return { ok: true, output };
   };
 
   const oracle = async (subset: Update[]): Promise<Outcome> => {
-    const inst = await apply(subset);
-    if (!inst.ok) {
-      // An update that cannot even be installed is as much a culprit as one that breaks tests.
-      logs.set(keyOf(subset), clean(inst.output));
+    const lane = await acquire();
+    try {
+      const inst = await apply(lane, subset);
+      if (!inst.ok) {
+        // An update that cannot even be installed is as much a culprit as one that breaks tests.
+        logs.set(keyOf(subset), clean(inst.output));
+        return 'fail';
+      }
+      let res;
+      for (let attempt = 0; attempt <= opts.retries; attempt++) {
+        res = await sh(opts.test, { cwd: lane.runDir, timeoutMs: opts.timeoutMs, env: testEnv });
+        if (res.code === 0) return 'pass';
+      }
+      logs.set(keyOf(subset), clean(`$ ${opts.test}\n${res!.timedOut ? '(timed out)\n' : ''}${res!.output}`));
       return 'fail';
+    } finally {
+      release(lane);
     }
-    let res;
-    for (let attempt = 0; attempt <= opts.retries; attempt++) {
-      res = await sh(opts.test, { cwd: runDir, timeoutMs: opts.timeoutMs, env: testEnv });
-      if (res.code === 0) return 'pass';
-    }
-    logs.set(keyOf(subset), clean(`$ ${opts.test}\n${res!.timedOut ? '(timed out)\n' : ''}${res!.output}`));
-    return 'fail';
   };
 
   try {
     const result = await findCulprits(updates, oracle, {
       key: (u) => u.id,
+      concurrency: jobs,
       onRun: (subset, outcome, n) =>
         opts.log(`run ${n}: ${outcome.toUpperCase().padEnd(4)} with ${subset.length ? subset.map((u) => u.name).join(', ') : '(no updates)'}`),
     });
@@ -283,23 +347,24 @@ export async function run(opts: RunOptions): Promise<RunReport> {
     report.result = result;
     report.culpritLogs = result.culprits.map((c) => excerpt(logs.get(keyOf(c)) ?? ''));
 
-    // Leave the worktree in the safe state and keep a copy of its dependency files.
-    const inst = await apply(result.safe);
+    // Put one lane in the safe state and keep a copy of its dependency files.
+    const lane = await acquire();
+    const inst = await apply(lane, result.safe);
     if (!inst.ok) throw new Error(`Could not install the safe set:\n${clean(inst.output)}`);
     report.safeFiles = {};
     for (const p of projects) {
       if (p.adapter.finalize) {
         const mine = result.safe.filter((u) => u.project === p.dir);
-        const res = await run(p, await p.adapter.finalize(projectDir(p), p.base, p.head, mine));
+        const res = await run(lane, p, await p.adapter.finalize(projectDir(lane, p), p.base, p.head, mine));
         if (!res.ok) throw new Error(`Could not install the safe set:\n${clean(res.output)}`);
       }
       for (const f of Object.keys(p.head)) {
-        const text = await readFile(join(projectDir(p), f), 'utf8').catch(() => null);
+        const text = await readFile(join(projectDir(lane, p), f), 'utf8').catch(() => null);
         if (text != null) report.safeFiles[posix.join(p.dir, f)] = text;
       }
     }
     if (opts.applySafe) {
-      for (const f of Object.keys(report.safeFiles)) await copyFile(join(runDir, f), join(root, dir, f));
+      for (const f of Object.keys(report.safeFiles)) await copyFile(join(lane.runDir, f), join(root, dir, f));
       report.appliedSafe = true;
     }
   } catch (err) {
@@ -310,7 +375,8 @@ export async function run(opts: RunOptions): Promise<RunReport> {
       report.status = 'no-failure';
     } else throw err;
   } finally {
-    await wt.dispose();
+    await creating;
+    for (const lane of lanes) await lane.wt.dispose();
   }
 
   report.durationMs = Date.now() - started;

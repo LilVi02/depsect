@@ -39,8 +39,9 @@ export interface MarkdownExtras {
 export function toMarkdown(r: RunReport, testCommand: string, extras: MarkdownExtras = {}): string {
   const out: string[] = [COMMENT_MARKER];
   const multi = r.projects.length > 1;
+  const parallel = r.jobs > 1 && r.result ? ` in ${plural(r.result.rounds, 'round')} (${r.jobs} at a time)` : '';
   const footer = (runs?: number) =>
-    `<sub>${runs !== undefined ? `${plural(runs, 'run')} · ` : ''}${formatDuration(r.durationMs)} · ` +
+    `<sub>${runs !== undefined ? `${plural(runs, 'run')}${parallel} · ` : ''}${formatDuration(r.durationMs)} · ` +
     `${r.adapter} · [depsect](https://github.com/LilVi02/depsect)</sub>`;
 
   switch (r.status) {
@@ -160,7 +161,8 @@ export function toTerminal(r: RunReport, testCommand: string, c: Paint = noColor
         out.push('');
       });
       if (res.safe.length) out.push(c.green(c.bold(`SAFE (${res.safe.length}, verified together):`)), ...res.safe.map(line));
-      out.push('', c.dim(`${plural(res.runs, 'run')} in ${formatDuration(r.durationMs)}`));
+      const rounds = r.jobs > 1 ? `, ${plural(res.rounds, 'round')} of up to ${r.jobs}` : '';
+      out.push('', c.dim(`${plural(res.runs, 'run')}${rounds} in ${formatDuration(r.durationMs)}`));
     }
   }
   if (r.excluded.length) out.push('', c.dim('not isolated:'), ...r.excluded.map((e) => c.dim(`  ${e}`)));

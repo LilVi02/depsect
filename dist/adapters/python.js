@@ -106,6 +106,7 @@ function pythonAdapter(spec) {
     };
     return {
         name: spec.name,
+        serialInstall: spec.serialInstall,
         files: [PYPROJECT, spec.lockfile],
         installCommand: spec.install,
         detect(head) {
@@ -177,6 +178,8 @@ export const uv = pythonAdapter({
 });
 export const poetry = pythonAdapter({
     name: 'poetry',
+    // Poetry's artifact cache is not safe for concurrent installs.
+    serialInstall: true,
     lockfile: 'poetry.lock',
     flavor: 'poetry',
     install: () => 'poetry sync --no-interaction',
