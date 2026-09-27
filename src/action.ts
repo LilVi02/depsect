@@ -67,6 +67,8 @@ async function main() {
   const transitive = (input('transitive') || 'auto') as TransitiveMode;
   if (!['auto', 'always', 'never'].includes(transitive)) throw new Error('Input "transitive" must be auto, always or never');
   const dir = input('working-directory') || '.';
+  const jobs = Number(input('jobs') || '1');
+  if (!Number.isInteger(jobs) || jobs < 1) throw new Error('Input "jobs" must be a positive integer');
 
   const report = await run({
     cwd: workspace,
@@ -76,6 +78,7 @@ async function main() {
     test,
     install: input('install-command') || undefined,
     retries: Number(input('retries') || '0'),
+    jobs,
     timeoutMs: timeout > 0 ? timeout * 60_000 : undefined,
     transitive,
     applySafe: bool('apply-safe'),

@@ -78,6 +78,7 @@ With `open-pr: true`, depsect also pushes a `depsect/safe-updates-<pr>` branch f
 | `transitive` | `auto` | Bisect transitive (lockfile-only) changes: `auto` does it when no direct dependency changed (e.g. lock file maintenance); `always`; `never`. |
 | `open-pr` | `false` | Open a PR with just the safe updates. Needs `contents: write`. |
 | `pr-token` | `github-token` | Token for the safe-updates PR. Pushes made with the default `GITHUB_TOKEN` don't trigger other workflows, so pass a PAT or GitHub App token if CI should run on that PR. |
+| `jobs` | `1` | Test up to this many subsets at the same time (see [Parallel runs](#parallel-runs)). |
 | `retries` | `0` | Re-run failing tests before trusting them (flaky suites). |
 | `timeout-minutes` | `0` | Per-command timeout. |
 | `apply-safe` | `false` | Write the safe updates to the working tree. |
@@ -94,6 +95,7 @@ npx depsect --base origin/main --test "cargo test"
 npx depsect --test "uv run pytest" --transitive always
 npx depsect --test "go test ./..." --apply-safe      # keep only the safe bumps
 npx depsect --test "./gradlew test"                  # Maven/Gradle: versions in pom.xml, catalogs, build scripts
+npx depsect --test "npm test" --jobs 3               # up to 3 subsets at a time
 ```
 
 depsect works in a throwaway `git worktree`, so your checkout stays untouched (unless you pass `--apply-safe`). Run `depsect --help` for all options. Exit codes: `0` no culprit, `1` culprit found, `2` base already broken, `3` error.
@@ -127,6 +129,24 @@ depsect finds every project a PR touches on its own. For each changed manifest o
 
 The test command runs from the working directory, so give it one that covers everything, e.g. `npm test --prefix web && (cd api && go test ./...)`. Projects whose part of a subset did not change are not reinstalled between runs.
 
+## Parallel runs
+
+With `--jobs N` (Action input `jobs`), depsect tests up to N subsets at the same time, each in its own worktree with its own installs. The binary search becomes an (N+1)-way search, testing N cut points per round, and the two initial checks run together.
+
+Rounds for one bad update among n, with the real search:
+
+| updates | `--jobs 1` | `--jobs 2` | `--jobs 3` | `--jobs 4` |
+| ---: | ---: | ---: | ---: | ---: |
+| 8 | 7 | 5 | 5 | 5 |
+| 16 | 8 | 6 | 5 | 5 |
+| 32 | 9 | 6 | 6 | 5 |
+| 64 | 10 | 7 | 6 | 6 |
+| 128 | 11 | 7 | 7 | 6 |
+
+About three rounds are fixed: the initial checks, confirming the culprit, and re-testing the safe set. The rest shrinks with N. On [depsect-demo](https://github.com/LilVi02/depsect-demo) (7 real npm updates, 2 culprits) with a test suite that takes 5 seconds, `--jobs 3` brought a run from 61 s down to 40 s.
+
+Parallel runs only work if your tests can run side by side, with no fixed ports, shared databases or shared files outside the project, so the default stays at 1. Installs for Yarn, Poetry and Bundler, whose shared caches are not safe for concurrent writes, run one at a time, while their tests still run in parallel. The results are the same as a sequential run.
+
 ## How it works
 
 1. Read the manifest and lockfile at `base` and `head` and list every package whose resolved version changed, direct or transitive.
@@ -145,7 +165,7 @@ The test command runs from the working directory, so give it one that covers eve
 - [x] Python (uv, Poetry), Cargo, Go modules
 - [x] Bisect transitive-only lockfile changes
 - [x] Open a PR with the safe updates from the Action
-- [ ] Run independent subsets in parallel
+- [x] Run independent subsets in parallel
 - [x] Workspaces and monorepos with several lockfiles in one PR
 - [x] Bundler, Composer, Maven/Gradle
 

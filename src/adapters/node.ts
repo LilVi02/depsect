@@ -47,6 +47,7 @@ interface TransitiveStrategy {
 
 interface NodeAdapterSpec {
   name: string;
+  serialInstall?: boolean;
   lockfile: string;
   reader: LockReader;
   install: (head: Snapshot) => string;
@@ -73,7 +74,7 @@ const manifestsOf = (...snaps: Snapshot[]) => {
 /** The lockfile "importer" of a manifest: its directory relative to the root, '' for the root. */
 const importerOf = (manifest: string) => (manifest === MANIFEST ? '' : posix.dirname(manifest));
 
-function nodeAdapter({ name, lockfile, reader, install, transitive }: NodeAdapterSpec): Adapter {
+function nodeAdapter({ name, lockfile, reader, install, transitive, serialInstall }: NodeAdapterSpec): Adapter {
   const resolved = (snap: Snapshot, dep: string, spec: string | undefined, manifest = MANIFEST) => {
     const text = snap[lockfile];
     return text && spec !== undefined ? reader.direct(text, dep, spec, importerOf(manifest)) : undefined;
@@ -122,6 +123,7 @@ function nodeAdapter({ name, lockfile, reader, install, transitive }: NodeAdapte
 
   return {
     name,
+    serialInstall,
     files: name === 'pnpm' ? [MANIFEST, lockfile, PNPM_WORKSPACE] : [MANIFEST, lockfile],
     installCommand: install,
 
@@ -270,6 +272,8 @@ export const pnpm = nodeAdapter({
 
 export const yarn = nodeAdapter({
   name: 'yarn',
+  // Yarn v1's global cache breaks under concurrent installs.
+  serialInstall: true,
   lockfile: 'yarn.lock',
   reader: yarnLock,
   install: (head) =>

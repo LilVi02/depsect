@@ -50,7 +50,7 @@ const manifestsOf = (...snaps) => {
 };
 /** The lockfile "importer" of a manifest: its directory relative to the root, '' for the root. */
 const importerOf = (manifest) => (manifest === MANIFEST ? '' : posix.dirname(manifest));
-function nodeAdapter({ name, lockfile, reader, install, transitive }) {
+function nodeAdapter({ name, lockfile, reader, install, transitive, serialInstall }) {
     const resolved = (snap, dep, spec, manifest = MANIFEST) => {
         const text = snap[lockfile];
         return text && spec !== undefined ? reader.direct(text, dep, spec, importerOf(manifest)) : undefined;
@@ -101,6 +101,7 @@ function nodeAdapter({ name, lockfile, reader, install, transitive }) {
     };
     return {
         name,
+        serialInstall,
         files: name === 'pnpm' ? [MANIFEST, lockfile, PNPM_WORKSPACE] : [MANIFEST, lockfile],
         installCommand: install,
         detect(head) {
@@ -241,6 +242,8 @@ export const pnpm = nodeAdapter({
 });
 export const yarn = nodeAdapter({
     name: 'yarn',
+    // Yarn v1's global cache breaks under concurrent installs.
+    serialInstall: true,
     lockfile: 'yarn.lock',
     reader: yarnLock,
     install: (head) => isBerry(head['yarn.lock'] ?? '')

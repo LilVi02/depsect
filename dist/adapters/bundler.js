@@ -132,6 +132,8 @@ export const bundler = {
     installCommand: () => 'bundle install',
     // The composed Gemfile.lock is consistent, but a frozen bundle refuses any lockfile it did not write.
     env: { BUNDLE_FROZEN: 'false' },
+    // Gems often install into one shared BUNDLE_PATH.
+    serialInstall: true,
     detect(head) {
         return head[MANIFEST] != null && head[LOCKFILE] != null;
     },

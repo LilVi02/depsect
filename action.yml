@@ -27,6 +27,10 @@ inputs:
     description: Re-run a failing test this many times before trusting it (for flaky suites).
     required: false
     default: '0'
+  jobs:
+    description: Test up to this many subsets at the same time, each in its own worktree. Only if the tests can run side by side (no shared ports, databases or files).
+    required: false
+    default: '1'
   timeout-minutes:
     description: Per-command timeout in minutes (0 = none).
     required: false

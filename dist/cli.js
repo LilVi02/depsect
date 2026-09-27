@@ -16,6 +16,9 @@ Options:
                         including workspace members; the test command runs here.
   -i, --install <cmd>   Install command (default depends on the package manager)
   -r, --retries <n>     Re-run a failing test n times before trusting it (default: 0)
+  -j, --jobs <n>        Test up to n subsets at the same time, each in its own
+                        worktree (default: 1). Only if your tests can run side
+                        by side (no shared ports, databases or files).
       --transitive <m>  Bisect lockfile-only (transitive) changes: auto, always, never
                         (default: auto = only when no direct dependency changed)
       --timeout <min>   Per-command timeout in minutes
@@ -35,6 +38,7 @@ async function main() {
             dir: { type: 'string', short: 'd', default: '.' },
             install: { type: 'string', short: 'i' },
             retries: { type: 'string', short: 'r', default: '0' },
+            jobs: { type: 'string', short: 'j', default: '1' },
             timeout: { type: 'string' },
             transitive: { type: 'string', default: 'auto' },
             'apply-safe': { type: 'boolean', default: false },
@@ -49,6 +53,9 @@ async function main() {
     }
     if (!['auto', 'always', 'never'].includes(values.transitive))
         throw new Error('--transitive must be auto, always or never');
+    const jobs = Number(values.jobs);
+    if (!Number.isInteger(jobs) || jobs < 1)
+        throw new Error('--jobs must be a positive integer');
     const quiet = values.json || values.markdown;
     const useColor = process.stdout.isTTY && !process.env.NO_COLOR;
     const c = useColor && !quiet ? colors : noColors;
@@ -61,6 +68,7 @@ async function main() {
         test: values.test,
         install: values.install,
         retries: Number(values.retries),
+        jobs,
         timeoutMs: values.timeout ? Number(values.timeout) * 60_000 : undefined,
         applySafe: values['apply-safe'],
         transitive: values.transitive,

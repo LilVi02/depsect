@@ -25,7 +25,8 @@ function details(summary, body) {
 export function toMarkdown(r, testCommand, extras = {}) {
     const out = [COMMENT_MARKER];
     const multi = r.projects.length > 1;
-    const footer = (runs) => `<sub>${runs !== undefined ? `${plural(runs, 'run')} · ` : ''}${formatDuration(r.durationMs)} · ` +
+    const parallel = r.jobs > 1 && r.result ? ` in ${plural(r.result.rounds, 'round')} (${r.jobs} at a time)` : '';
+    const footer = (runs) => `<sub>${runs !== undefined ? `${plural(runs, 'run')}${parallel} · ` : ''}${formatDuration(r.durationMs)} · ` +
         `${r.adapter} · [depsect](https://github.com/LilVi02/depsect)</sub>`;
     switch (r.status) {
         case 'no-updates':
@@ -108,7 +109,8 @@ export function toTerminal(r, testCommand, c = noColors) {
             });
             if (res.safe.length)
                 out.push(c.green(c.bold(`SAFE (${res.safe.length}, verified together):`)), ...res.safe.map(line));
-            out.push('', c.dim(`${plural(res.runs, 'run')} in ${formatDuration(r.durationMs)}`));
+            const rounds = r.jobs > 1 ? `, ${plural(res.rounds, 'round')} of up to ${r.jobs}` : '';
+            out.push('', c.dim(`${plural(res.runs, 'run')}${rounds} in ${formatDuration(r.durationMs)}`));
         }
     }
     if (r.excluded.length)

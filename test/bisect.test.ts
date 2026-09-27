@@ -78,3 +78,69 @@ test('terminates with a flaky oracle', async () => {
   // Must not hang or throw on inconsistent answers once past the sanity checks.
   await findCulprits(units(16), async (s) => (s.length === 16 ? 'fail' : flaky(s)), { key: (u) => u });
 });
+
+// --- Concurrency ---------------------------------------------------------------
+
+/** A deterministic pseudo-random generator, so failures reproduce. */
+function rng(seed: number) {
+  return () => ((seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31);
+}
+
+test('parallel search finds exactly what the sequential one finds', async () => {
+  const rand = rng(42);
+  for (let trial = 0; trial < 200; trial++) {
+    const n = 1 + Math.floor(rand() * 40);
+    const all = units(n);
+    // One to three culprit groups of size one to three.
+    const groups: string[][] = [];
+    for (let g = 0; g < 1 + Math.floor(rand() * 3); g++) {
+      groups.push([...new Set(Array.from({ length: 1 + Math.floor(rand() * 3) }, () => all[Math.floor(rand() * n)]!))]);
+    }
+    const sequential = await bisect(all, groups);
+    for (const concurrency of [2, 3, 4, 8]) {
+      const parallel = await findCulprits(all, oracleFor(groups), { key: (u) => u, concurrency });
+      assert.deepEqual(parallel.culprits, sequential.culprits, `trial ${trial}, n=${n}, groups=${JSON.stringify(groups)}, concurrency=${concurrency}`);
+      assert.deepEqual(parallel.safe, sequential.safe);
+    }
+  }
+});
+
+test('never runs more subsets at once than allowed, and needs fewer rounds', async () => {
+  for (const concurrency of [1, 2, 3, 4]) {
+    let running = 0;
+    let peak = 0;
+    const slow = async (subset: string[]): Promise<Outcome> => {
+      running++;
+      peak = Math.max(peak, running);
+      await new Promise((r) => setTimeout(r, 2));
+      running--;
+      return oracleFor([['u37']])(subset);
+    };
+    const res = await findCulprits(units(64), slow, { key: (u) => u, concurrency });
+    assert.deepEqual(res.culprits, [['u37']]);
+    assert.ok(peak <= concurrency, `peak ${peak} with concurrency ${concurrency}`);
+    if (concurrency === 1) assert.equal(res.rounds, res.runs, 'sequential: one run per round');
+    else assert.ok(res.rounds <= 7, `concurrency ${concurrency}: ${res.rounds} rounds`);
+  }
+});
+
+test('rounds shrink as concurrency grows', async () => {
+  const rounds = [];
+  for (const concurrency of [1, 3, 7]) {
+    rounds.push((await findCulprits(units(256), oracleFor([['u200']]), { key: (u) => u, concurrency })).rounds);
+  }
+  // log2(256) = 8, log4(256) = 4, log8(256) ≈ 2.7, plus the sanity checks and a confirmation.
+  assert.ok(rounds[0]! > rounds[1]! && rounds[1]! > rounds[2]!, `rounds: ${rounds}`);
+  assert.ok(rounds[2]! <= 6, `rounds: ${rounds}`);
+});
+
+test('concurrent requests for the same subset share one run', async () => {
+  const seen = new Map<string, number>();
+  await findCulprits(units(20), async (s) => {
+    const k = s.join(',');
+    seen.set(k, (seen.get(k) ?? 0) + 1);
+    await new Promise((r) => setTimeout(r, 1));
+    return oracleFor([['u4', 'u15']])(s);
+  }, { key: (u) => u, concurrency: 5 });
+  assert.ok([...seen.values()].every((c) => c === 1), 'a subset ran twice');
+});

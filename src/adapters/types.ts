@@ -50,6 +50,8 @@ export interface Adapter {
   installCommand(head: Snapshot): string;
   /** Environment for every command depsect runs for this project, including the test command. */
   env?: Record<string, string>;
+  /** Its shared cache is not safe for concurrent installs: with --jobs, install one worktree at a time. */
+  serialInstall?: boolean;
 }
 
 /** Group versions for display: "1.0.0" or "1.0.0, 2.0.0"; null when there are none. */
